@@ -1,0 +1,157 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f6f1ea;
+  --foreground: #231913;
+  --app-font-sans:
+    "Avenir Next", "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", sans-serif;
+  --app-font-display:
+    "Baskerville", "Palatino Linotype", "Times New Roman", "Songti SC",
+    serif;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--app-font-sans);
+  --font-display: var(--app-font-display);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--app-font-sans), sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--app-font-display), serif;
+}
+
+button {
+  cursor: pointer;
+}
+
+.glass-panel {
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.72),
+    rgba(255, 250, 244, 0.5)
+  );
+  box-shadow:
+    0 24px 80px rgba(95, 73, 55, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(22px);
+  border-radius: 32px;
+}
+
+.balloon {
+  position: absolute;
+  display: block;
+  border-radius: 9999px;
+  filter: blur(0.3px);
+  opacity: 0.38;
+}
+
+.balloon::after {
+  content: "";
+  position: absolute;
+  inset: 14% 18% auto auto;
+  width: 26%;
+  height: 26%;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.balloon-1 {
+  top: 9%;
+  left: 5%;
+  width: 118px;
+  height: 146px;
+  background: radial-gradient(circle at 35% 30%, #fff7ef, #e5c6a0 70%, #bc8f67);
+}
+
+.balloon-2 {
+  top: 18%;
+  right: 8%;
+  width: 92px;
+  height: 120px;
+  background: radial-gradient(circle at 35% 30%, #fffaf4, #d7d3c8 72%, #aea18f);
+}
+
+.balloon-3 {
+  bottom: 18%;
+  left: 12%;
+  width: 104px;
+  height: 134px;
+  background: radial-gradient(circle at 35% 30%, #fff8ef, #efb98e 68%, #cc8c62);
+}
+
+.balloon-4 {
+  right: 18%;
+  bottom: 8%;
+  width: 136px;
+  height: 164px;
+  background: radial-gradient(circle at 35% 30%, #fffefb, #d8c7b6 70%, #a9886e);
+}
+
+.balloon-5 {
+  top: 48%;
+  right: 34%;
+  width: 76px;
+  height: 98px;
+  background: radial-gradient(circle at 35% 30%, #fff8f0, #eed5bf 70%, #d0aa82);
+}
+
+.typing-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: #8f6948;
+  animation: blink 1.4s infinite both;
+}
+
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.2;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@media (max-width: 640px) {
+  .glass-panel {
+    border-radius: 28px;
+  }
+
+  .balloon-1,
+  .balloon-4 {
+    transform: scale(0.74);
+  }
+}
