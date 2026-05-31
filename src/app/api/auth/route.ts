@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-type AuthMode = "login" | "register";
+type AuthMode = "login" | "register" | "reset";
 
 function getSupabaseServerClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -41,18 +41,61 @@ export async function POST(request: Request) {
   const email = payload.email?.trim();
   const password = payload.password ?? "";
 
-  if (!mode || !email || !password) {
+  if (!mode || !email) {
+    return NextResponse.json({ error: "请完整填写邮箱。" }, { status: 400 });
+  }
+
+  if (mode !== "reset" && !password) {
     return NextResponse.json({ error: "请完整填写邮箱和密码。" }, { status: 400 });
   }
 
   try {
+    if (mode === "reset") {
+      const origin = request.headers.get("origin");
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: origin ? `${origin}/login` : undefined,
+      });
+
+      if (error) {
+        return NextResponse.json(
+          { error: error.message, errorCode: "RESET_ERROR" },
+          { status: 400 },
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        mode,
+        message: "已发送重置密码邮件，请检查邮箱。",
+      });
+    }
+
     const result =
       mode === "login"
         ? await supabase.auth.signInWithPassword({ email, password })
         : await supabase.auth.signUp({ email, password });
 
     if (result.error) {
-      return NextResponse.json({ error: result.error.message, errorCode: "AUTH_ERROR" }, { status: 400 });
+      const errorCode =
+        mode === "login" && result.error.message === "Invalid login credentials"
+          ? "INVALID_LOGIN_CREDENTIALS"
+          : "AUTH_ERROR";
+
+      return NextResponse.json(
+        { error: result.error.message, errorCode },
+        { status: 400 },
+      );
+    }
+
+    if (mode === "register" && !result.data.session) {
+      return NextResponse.json(
+        {
+          error:
+            "该邮箱已经存在，或需要先完成邮箱确认。请直接登录，或使用“忘记密码”重置后再登录。",
+          errorCode: "ACCOUNT_EXISTS_OR_CONFIRMATION_REQUIRED",
+        },
+        { status: 409 },
+      );
     }
 
     return NextResponse.json({

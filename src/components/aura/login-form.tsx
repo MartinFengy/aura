@@ -27,6 +27,40 @@ export function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
+  async function handlePasswordReset() {
+    if (!email.trim()) {
+      setMessage("请先输入注册时使用的邮箱。");
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+
+    try {
+      const response = await fetch("/api/auth", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ mode: "reset", email }),
+      });
+
+      const result = (await response.json().catch(() => ({
+        error: "重置密码返回格式异常。",
+      }))) as { error?: string; message?: string };
+
+      setLoading(false);
+      setMessage(result.message ?? result.error ?? "已发送重置密码邮件，请检查邮箱。");
+    } catch (error) {
+      setLoading(false);
+      setMessage(
+        error instanceof Error
+          ? `发送重置邮件失败：${error.message}`
+          : "发送重置邮件失败，请稍后重试。",
+      );
+    }
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -63,6 +97,7 @@ export function LoginForm() {
     const result = (await response.json().catch(() => ({ error: "登录返回格式异常。" }))) as {
       error?: string;
       errorCode?: string;
+      message?: string;
       session?: { access_token: string; refresh_token: string } | null;
     };
 
@@ -74,6 +109,11 @@ export function LoginForm() {
         window.setTimeout(() => {
           router.push("/reading");
         }, 500);
+        return;
+      }
+      if (result.errorCode === "INVALID_LOGIN_CREDENTIALS") {
+        setLoading(false);
+        setMessage("邮箱或密码不正确。你可以检查密码，或点击“忘记密码”发送重置邮件。");
         return;
       }
       setLoading(false);
@@ -91,9 +131,11 @@ export function LoginForm() {
     setMessage(
       mode === "login"
         ? "登录成功，正在进入学习空间。"
-        : "注册成功，请检查邮箱确认链接，随后可直接进入学习空间。",
+        : result.message ?? "注册成功，请检查邮箱确认链接，确认后再登录。",
     );
-    router.push("/reading");
+    if (result.session) {
+      router.push("/reading");
+    }
   }
 
   return (
@@ -167,6 +209,17 @@ export function LoginForm() {
           {mode === "login" ? "进入学习空间" : "创建 Aura 账号"}
           {!loading && <ArrowRight className="h-4 w-4" />}
         </button>
+
+        {mode === "login" ? (
+          <button
+            type="button"
+            onClick={handlePasswordReset}
+            disabled={loading}
+            className="w-full rounded-[22px] border border-stone-200 bg-white/70 px-4 py-3 text-sm text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            忘记密码，发送重置邮件
+          </button>
+        ) : null}
       </form>
 
       <div className="rounded-[24px] border border-dashed border-stone-300/70 bg-[#fbf6ef] px-4 py-4 text-sm leading-7 text-stone-600">
