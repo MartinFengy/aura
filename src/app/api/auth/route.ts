@@ -19,6 +19,36 @@ function getSupabaseServerClient() {
   });
 }
 
+function normalizeSiteUrl(raw: string | null | undefined) {
+  if (!raw) {
+    return null;
+  }
+
+  if (raw.startsWith("http://") || raw.startsWith("https://")) {
+    return raw;
+  }
+
+  return `https://${raw}`;
+}
+
+function resolvePasswordResetRedirect(request: Request) {
+  const candidates = [
+    process.env.NEXT_PUBLIC_SITE_URL,
+    process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    process.env.VERCEL_URL,
+    request.headers.get("origin"),
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeSiteUrl(candidate);
+    if (normalized) {
+      return `${normalized.replace(/\/$/, "")}/login`;
+    }
+  }
+
+  return undefined;
+}
+
 export async function POST(request: Request) {
   const supabase = getSupabaseServerClient();
 
@@ -51,9 +81,8 @@ export async function POST(request: Request) {
 
   try {
     if (mode === "reset") {
-      const origin = request.headers.get("origin");
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: origin ? `${origin}/login` : undefined,
+        redirectTo: resolvePasswordResetRedirect(request),
       });
 
       if (error) {
