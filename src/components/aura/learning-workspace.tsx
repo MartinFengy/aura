@@ -25,6 +25,7 @@ import {
   createTaskFromAnalysis,
   useLearningTasks,
 } from "@/hooks/use-learning-tasks";
+import type { RecognitionTask } from "@/lib/learning-store";
 
 const quickActions = [
   { label: "文字追加", icon: MessageSquareDashed },
@@ -43,11 +44,234 @@ function splitTranscriptSentences(transcript: string) {
     .filter((sentence) => /[A-Za-z]/.test(sentence));
 }
 
-function parseRequestedTerms(text: string) {
+function normalizeSearchText(text: string) {
   return text
-    .split(/[\n,，；;、]+/)
+    .toLowerCase()
+    .replace(/\b(?:[a-z]\.){2,}/g, (match) => match.replaceAll(".", ""))
+    .replace(/['"]/g, "")
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildSearchVariants(term: string) {
+  const normalized = normalizeSearchText(term);
+  if (!normalized) {
+    return [];
+  }
+
+  const variants = new Set<string>([normalized]);
+
+  if (normalized.endsWith("ies")) {
+    variants.add(`${normalized.slice(0, -3)}y`);
+  } else if (normalized.endsWith("es")) {
+    variants.add(normalized.slice(0, -2));
+  } else if (normalized.endsWith("s") && !normalized.endsWith("ss")) {
+    variants.add(normalized.slice(0, -1));
+  } else {
+    variants.add(`${normalized}s`);
+    variants.add(`${normalized}es`);
+    if (normalized.endsWith("y")) {
+      variants.add(`${normalized.slice(0, -1)}ies`);
+    }
+  }
+
+  return Array.from(variants).filter(Boolean);
+}
+
+function splitRequestedItems(text: string) {
+  return text
+    .split(/[\n,，；;、]+|\s+(?:and|or)\s+/i)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function filterEntriesForRequestedTerms(
+  entries: Array<{
+    id: string;
+    sentence: string;
+    vocabulary: string;
+    chinese: string;
+    example: string;
+    pronunciation: string;
+  }>,
+  requestedTerms: string[],
+) {
+  if (requestedTerms.length === 0) {
+    return entries;
+  }
+
+  const termVariants = requestedTerms.map((term) => buildSearchVariants(term)).filter(Boolean);
+
+  return entries.filter((entry) => {
+    const normalizedVocabulary = normalizeSearchText(entry.vocabulary);
+
+    return termVariants.some((variants) =>
+      variants.some(
+        (variant) =>
+          normalizedVocabulary.includes(variant) || variant.includes(normalizedVocabulary),
+      ),
+    );
+  });
+}
+
+function tokenOverlapScore(source: string, target: string) {
+  const sourceTokens = normalizeSearchText(source).split(" ").filter(Boolean);
+  const targetTokens = normalizeSearchText(target).split(" ").filter(Boolean);
+
+  if (sourceTokens.length === 0 || targetTokens.length === 0) {
+    return 0;
+  }
+
+  const sourceSet = new Set(sourceTokens);
+  const matched = targetTokens.filter((token) => sourceSet.has(token)).length;
+
+  return matched / Math.max(targetTokens.length, 1);
+}
+
+function parseAppendRequest(text: string) {
+  const cleanedText = text
+    .replace(/^(?:请)?(?:继续)?(?:帮我)?(?:追加|添加|补充)/, "")
+    .trim();
+
+  const sentenceHints: string[] = [];
+  let termSource = cleanedText;
+
+  const sentenceAndTermMatch =
+    cleanedText.match(/(.+?)(?:中的|里(?:的)?|当中的)(.+)$/) ??
+    cleanedText.match(/(.+?)(?:这句话里的?|这句中的)(.+)$/);
+
+  if (sentenceAndTermMatch) {
+    const [, sentencePart, termPart] = sentenceAndTermMatch;
+    if (sentencePart?.trim()) {
+      sentenceHints.push(sentencePart.trim());
+    }
+    termSource = termPart.trim();
+  } else if (/[.!?]/.test(cleanedText) && /[A-Za-z]/.test(cleanedText)) {
+    sentenceHints.push(cleanedText);
+  }
+
+  const requestedTerms = splitRequestedItems(
+    termSource
+      .replace(/^(?:词|词语|短语|单词|表达)[:：]?\s*/i, "")
+      .replace(/^(?:这个|这些|该)?\s*(?:词|词语|词组|短语|单词|表达)\s*/i, "")
+      .replace(/\s+(?:这个|这些|该)\s*(?:词|短语|表达)\s*$/i, ""),
+  );
+
+  return {
+    requestedTerms: Array.from(new Set(requestedTerms)),
+    sentenceHints: Array.from(new Set(sentenceHints)),
+  };
+}
+
+function findMatchedSentences(params: {
+  taskSentences: string[];
+  requestedTerms: string[];
+  sentenceHints: string[];
+}) {
+  const matchedBySentence = new Set<string>();
+
+  params.sentenceHints.forEach((hint) => {
+    const normalizedHint = normalizeSearchText(hint);
+    if (!normalizedHint) {
+      return;
+    }
+
+    const exactSentence = params.taskSentences.find((sentence) => {
+      const normalizedSentence = normalizeSearchText(sentence);
+      return (
+        normalizedSentence.includes(normalizedHint) ||
+        normalizedHint.includes(normalizedSentence)
+      );
+    });
+
+    if (exactSentence) {
+      matchedBySentence.add(exactSentence);
+      return;
+    }
+
+    const bestSentence = params.taskSentences
+      .map((sentence) => ({
+        sentence,
+        score: tokenOverlapScore(sentence, hint),
+      }))
+      .sort((left, right) => right.score - left.score)[0];
+
+    if (bestSentence && bestSentence.score >= 0.25) {
+      matchedBySentence.add(bestSentence.sentence);
+    }
+  });
+
+  params.taskSentences.forEach((sentence) => {
+    const normalizedSentence = normalizeSearchText(sentence);
+    const includesRequestedTerm = params.requestedTerms.some((term) =>
+      buildSearchVariants(term).some((variant) => normalizedSentence.includes(variant)),
+    );
+
+    if (includesRequestedTerm) {
+      matchedBySentence.add(sentence);
+    }
+  });
+
+  return Array.from(matchedBySentence);
+}
+
+function collectTaskSentences(task: Pick<RecognitionTask, "rawText" | "entries">) {
+  return Array.from(
+    new Set([
+      ...splitTranscriptSentences(task.rawText ?? ""),
+      ...task.entries.map((entry) => entry.sentence.trim()).filter(Boolean),
+    ]),
+  );
+}
+
+function findAppendTarget(params: {
+  tasks: RecognitionTask[];
+  selectedTaskId?: string;
+  requestedTerms: string[];
+  sentenceHints: string[];
+}) {
+  const byTask = params.tasks
+    .map((task) => {
+      const taskSentences = collectTaskSentences(task);
+      const matchedSentences = findMatchedSentences({
+        taskSentences,
+        requestedTerms: params.requestedTerms,
+        sentenceHints: params.sentenceHints,
+      });
+
+      return {
+        task,
+        taskSentences,
+        matchedSentences,
+        score:
+          matchedSentences.length * 10 +
+          params.sentenceHints.reduce((total, hint) => {
+            const bestMatch = taskSentences
+              .map((sentence) => tokenOverlapScore(sentence, hint))
+              .sort((left, right) => right - left)[0];
+            return total + (bestMatch ?? 0);
+          }, 0),
+      };
+    })
+    .filter((candidate) => candidate.matchedSentences.length > 0)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+
+      if (left.task.id === params.selectedTaskId) {
+        return -1;
+      }
+
+      if (right.task.id === params.selectedTaskId) {
+        return 1;
+      }
+
+      return 0;
+    });
+
+  return byTask[0];
 }
 
 function createAgentMessages(params: {
@@ -172,7 +396,7 @@ export function LearningWorkspace() {
   }
 
   async function analyzeUpload() {
-    if (queuedFiles.length === 0 && !selectedTask?.rawText) {
+    if (queuedFiles.length === 0 && tasks.length === 0) {
       setStatusMessage("请先上传图片，或者先选中一个已有任务再继续追加词汇。");
       return;
     }
@@ -189,45 +413,61 @@ export function LearningWorkspace() {
       const formData = new FormData();
       let effectiveInstructions = draft;
       let effectiveRawText = selectedTask?.rawText ?? "";
+      let targetTaskId = selectedTask?.id;
+      let targetTaskName = selectedTask?.name;
+      let targetExistingEntries = selectedTask?.entries ?? [];
+      let appendRequestedTerms: string[] = [];
 
       uploadFiles.forEach((file) => {
         formData.append("files", file);
       });
 
-      if (queuedFiles.length === 0 && selectedAction === "文字追加" && selectedTask?.rawText) {
-        const requestedTerms = parseRequestedTerms(draft);
+      if (queuedFiles.length === 0 && selectedAction === "文字追加") {
+        const { requestedTerms, sentenceHints } = parseAppendRequest(draft);
+        appendRequestedTerms = requestedTerms;
+
         if (requestedTerms.length === 0) {
-          setStatusMessage("请输入要追加的单词或短语，支持用逗号、顿号或换行分隔。");
+          setStatusMessage("请输入要追加的单词或短语，也支持“某句中的某个词/短语”这种写法。");
           setIsAnalyzing(false);
           return;
         }
 
-        const taskSentences = Array.from(
-          new Set([
-            ...splitTranscriptSentences(selectedTask.rawText),
-            ...selectedTask.entries.map((entry) => entry.sentence.trim()).filter(Boolean),
-          ]),
-        );
-        const matchedSentences = taskSentences.filter((sentence) =>
-          requestedTerms.some((term) =>
-            sentence.toLowerCase().includes(term.toLowerCase()),
-          ),
-        );
+        const matchedTarget = findAppendTarget({
+          tasks,
+          selectedTaskId,
+          requestedTerms,
+          sentenceHints,
+        });
 
-        if (matchedSentences.length === 0) {
-          setStatusMessage("没有在当前任务原文里找到这些词或短语，请换一个表达后再试。");
-          setIsAnalyzing(false);
-          return;
+        if (!matchedTarget) {
+          if (sentenceHints.length > 0) {
+            effectiveRawText = sentenceHints.join("\n");
+            effectiveInstructions = `请只追加这些指定词汇或短语本身：${requestedTerms.join("、")}。我提供了目标原句，请先在句子里定位这些表达；如果词语是单数/复数、大小写或轻微变形，请按同一表达处理。每个指定表达最多输出 1 条记录，不要扩展到其他相关词条，也不要补充额外单词。`;
+            setStatusMessage(
+              "没有在本地任务里精确定位到原句，已改为基于你输入的原句提示直接补充提取。",
+            );
+          } else {
+            effectiveInstructions = `请只追加这些指定词汇或短语本身：${requestedTerms.join("、")}。如果当前原文中存在完全匹配或单复数变化，请找到其所在原句并只输出该表达对应的 1 条学习词条；如果原文中不存在完全匹配，也请直接为这个词或短语生成 1 条词条，不要额外扩展其他相关词汇。`;
+            setStatusMessage("没有在当前任务原文里直接定位到该表达，已改为按你指定的词语严格补充。");
+          }
+        } else {
+          targetTaskId = matchedTarget.task.id;
+          targetTaskName = matchedTarget.task.name;
+          targetExistingEntries = matchedTarget.task.entries ?? [];
+          effectiveRawText = matchedTarget.matchedSentences.join("\n");
+          effectiveInstructions = `请只追加这些指定词汇或短语本身：${requestedTerms.join("、")}。先找到它们所在的原句，再只输出这些指定表达各自对应的词条。不要扩展到句子里的其他高质量词汇，不要补充其他相关词条，也不要重复已有内容。若我给出了目标句子提示，请优先以该句为准。`;
+
+          if (selectedTask && matchedTarget.task.id !== selectedTask.id) {
+            setSelectedTaskId(matchedTarget.task.id);
+            setStatusMessage(`已自动定位到任务「${matchedTarget.task.name}」，将基于对应原句继续追加。`);
+          }
         }
-
-        effectiveRawText = matchedSentences.join("\n");
-        effectiveInstructions = `请优先围绕这些指定词汇或短语追加结果：${requestedTerms.join("、")}。先找到它们所在的原句，再把对应句子里的高质量单词、短语、专有名词、人名、地名、机构名整理进结果里，不要重复已有词条。`;
       }
 
       formData.append("instructions", effectiveInstructions);
       formData.append("feishuLink", config.feishuLink);
       formData.append("existingRawText", effectiveRawText);
-      formData.append("existingEntries", JSON.stringify(selectedTask?.entries ?? []));
+      formData.append("existingEntries", JSON.stringify(targetExistingEntries));
 
       const response = await fetch("/api/analyze", {
         method: "POST",
@@ -255,29 +495,43 @@ export function LearningWorkspace() {
         throw new Error(payload.error || "分析失败");
       }
 
+      const resolvedEntries =
+        queuedFiles.length === 0 && selectedAction === "文字追加"
+          ? filterEntriesForRequestedTerms(payload.entries ?? [], appendRequestedTerms)
+          : (payload.entries ?? []);
+
+      if (
+        queuedFiles.length === 0 &&
+        selectedAction === "文字追加" &&
+        appendRequestedTerms.length > 0 &&
+        resolvedEntries.length === 0
+      ) {
+        throw new Error("没有为你指定的词或短语生成可追加结果，请换一个表达后再试。");
+      }
+
       if (queuedFiles.length > 0) {
         const task = createTaskFromAnalysis({
           fileName: payload.fileName ?? queuedFiles[0]?.name ?? "新识别任务",
           rawText: payload.rawText ?? payload.cleanedText ?? "",
-          entries: payload.entries ?? [],
+          entries: resolvedEntries,
           feishuLink: payload.feishuLink ?? config.feishuLink,
         });
 
         addTaskFromAnalysis(task);
-      } else if (selectedTask) {
+      } else if (targetTaskId) {
         appendAnalysisToTask({
-          taskId: selectedTask.id,
+          taskId: targetTaskId,
           rawText: payload.rawText ?? payload.cleanedText,
-          entries: payload.entries ?? [],
+          entries: resolvedEntries,
           feishuLink: payload.feishuLink ?? config.feishuLink,
         });
       }
 
       setQueuedFiles([]);
       setStatusMessage(
-        `分析完成，已生成 ${(payload.entries ?? []).length} 条结果，将写入飞书：${
-          payload.feishuLink ?? config.feishuLink
-        }`,
+        `分析完成，已生成 ${resolvedEntries.length} 条结果${
+          targetTaskName ? `，已追加到「${targetTaskName}」` : ""
+        }。`,
       );
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "分析失败，请稍后再试。");
