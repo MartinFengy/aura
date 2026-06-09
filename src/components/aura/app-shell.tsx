@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ChevronRight,
@@ -55,6 +55,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     clearActiveUserKey();
     router.push("/login");
   }
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return undefined;
+    }
+
+    document.body.dataset.mobileNavOpen = "true";
+    return () => {
+      delete document.body.dataset.mobileNavOpen;
+    };
+  }, []);
 
   return (
     <main className="relative min-h-screen overflow-x-hidden bg-[radial-gradient(circle_at_top,_rgba(236,225,214,0.85),_rgba(245,241,235,0.92)_42%,_#f6f1ea_100%)] text-stone-900">
@@ -239,8 +250,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <nav
-        className="fixed inset-x-3 z-20 lg:hidden"
-        style={{ bottom: "var(--mobile-safe-bottom)" }}
+        className="mobile-bottom-nav fixed inset-x-3 bottom-0 z-30 lg:hidden"
       >
         <div className="glass-panel flex items-center justify-between px-3 py-2">
           {navItems.map(({ label, shortLabel, href, icon: Icon }) => {

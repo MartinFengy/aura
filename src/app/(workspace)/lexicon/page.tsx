@@ -150,6 +150,21 @@ export default function LexiconPage() {
     scopedEntries.length === 0 ? 0 : Math.min(questionIndex, scopedEntries.length - 1);
   const currentEntry = scopedEntries[safeQuestionIndex] ?? null;
   const progress = `${Math.round((Math.min(safeQuestionIndex + 1, totalQuestions) / totalQuestions) * 100)}%`;
+  const sessionSummary = useMemo(() => {
+    const correctCount = sessionAnswers.filter((answer) => answer.result === "认识").length;
+    const fuzzyCount = sessionAnswers.filter((answer) => answer.result === "模糊").length;
+    const wrongCount = sessionAnswers.filter((answer) => answer.result === "不认识").length;
+    const answeredCount = sessionAnswers.length;
+    const score = answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0;
+
+    return {
+      correctCount,
+      fuzzyCount,
+      wrongCount,
+      answeredCount,
+      score,
+    };
+  }, [sessionAnswers]);
 
   useEffect(() => {
     if (!dictationStarted || !autoPlay || !currentEntry || sessionFinished) {
@@ -926,56 +941,90 @@ export default function LexiconPage() {
 
               <div className="rounded-[32px] border border-stone-100 bg-[#fbfbfb] px-6 py-10 text-center">
                 <div className="mx-auto flex max-w-[820px] flex-col items-center gap-5">
-                  <p className="text-5xl text-stone-400">🔊</p>
-                  <p className="text-4xl text-stone-500">
-                    {dictationStarted ? "请听发音后作答" : "点击开始听写后开始播放"}
-                  </p>
-                  <button
-                    type="button"
-                  onClick={() => setShowAnswer((current) => !current)}
-                    disabled={!dictationStarted}
-                    className="inline-flex items-center gap-2 rounded-[18px] border border-stone-200 bg-white px-5 py-3 text-2xl font-medium text-stone-900 shadow-sm"
-                  >
-                    <Eye className="h-6 w-6" />
-                    {showAnswer ? "隐藏答案" : "显示答案"}
-                  </button>
-
-                  {showAnswer && currentEntry ? (
-                    <div className="w-full rounded-[24px] bg-[#f5efe8] px-5 py-5 text-left">
-                      <div className="flex flex-wrap items-center gap-3">
-                        <p className="text-2xl font-semibold text-stone-900">
-                          {currentEntry.vocabulary}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => speakText(currentEntry.vocabulary)}
-                          className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-sm text-stone-700"
-                        >
-                          <Volume2 className="h-4 w-4" />
-                          播放词条
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => speakText(currentEntry.example)}
-                          className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-sm text-stone-700"
-                        >
-                          <Play className="h-4 w-4" />
-                          播放例句
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => speakText(currentEntry.sentence)}
-                          className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-sm text-stone-700"
-                        >
-                          <Headphones className="h-4 w-4" />
-                          播放原句
-                        </button>
+                  {sessionFinished ? (
+                    <div className="w-full rounded-[28px] bg-[#f5efe8] px-5 py-6 text-left">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                          <p className="text-sm uppercase tracking-[0.25em] text-stone-500">Session Complete</p>
+                          <h4 className="mt-2 text-3xl font-semibold text-stone-900">本次听写已完成</h4>
+                          <p className="mt-2 text-lg text-stone-600">
+                            共作答 {sessionSummary.answeredCount} 题，得分 {sessionSummary.score} 分
+                          </p>
+                        </div>
+                        <div className="rounded-[24px] bg-stone-900 px-5 py-4 text-white">
+                          <p className="text-sm text-stone-300">正确率</p>
+                          <p className="mt-1 text-3xl font-semibold">{sessionSummary.score}%</p>
+                        </div>
                       </div>
-                      <p className="mt-2 text-lg text-stone-600">{currentEntry.chinese}</p>
-                      <p className="mt-4 text-base leading-7 text-stone-700">{currentEntry.sentence}</p>
-                      <p className="mt-4 text-base leading-7 text-stone-700">{currentEntry.example}</p>
+                      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-[20px] bg-[#d8f2df] px-4 py-4">
+                          <p className="text-sm text-stone-600">掌握</p>
+                          <p className="mt-2 text-2xl font-semibold text-stone-900">{sessionSummary.correctCount}</p>
+                        </div>
+                        <div className="rounded-[20px] bg-[#fff1bf] px-4 py-4">
+                          <p className="text-sm text-stone-600">模糊</p>
+                          <p className="mt-2 text-2xl font-semibold text-stone-900">{sessionSummary.fuzzyCount}</p>
+                        </div>
+                        <div className="rounded-[20px] bg-[#ffd7d7] px-4 py-4">
+                          <p className="text-sm text-stone-600">不认识</p>
+                          <p className="mt-2 text-2xl font-semibold text-stone-900">{sessionSummary.wrongCount}</p>
+                        </div>
+                      </div>
                     </div>
-                  ) : null}
+                  ) : (
+                    <>
+                      <p className="text-5xl text-stone-400">🔊</p>
+                      <p className="text-4xl text-stone-500">
+                        {dictationStarted ? "请听发音后作答" : "点击开始听写后开始播放"}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setShowAnswer((current) => !current)}
+                        disabled={!dictationStarted}
+                        className="inline-flex items-center gap-2 rounded-[18px] border border-stone-200 bg-white px-5 py-3 text-2xl font-medium text-stone-900 shadow-sm"
+                      >
+                        <Eye className="h-6 w-6" />
+                        {showAnswer ? "隐藏答案" : "显示答案"}
+                      </button>
+
+                      {showAnswer && currentEntry ? (
+                        <div className="w-full rounded-[24px] bg-[#f5efe8] px-5 py-5 text-left">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <p className="text-2xl font-semibold text-stone-900">
+                              {currentEntry.vocabulary}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => speakText(currentEntry.vocabulary)}
+                              className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-sm text-stone-700"
+                            >
+                              <Volume2 className="h-4 w-4" />
+                              播放词条
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => speakText(currentEntry.example)}
+                              className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-sm text-stone-700"
+                            >
+                              <Play className="h-4 w-4" />
+                              播放例句
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => speakText(currentEntry.sentence)}
+                              className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-sm text-stone-700"
+                            >
+                              <Headphones className="h-4 w-4" />
+                              播放原句
+                            </button>
+                          </div>
+                          <p className="mt-2 text-lg text-stone-600">{currentEntry.chinese}</p>
+                          <p className="mt-4 text-base leading-7 text-stone-700">{currentEntry.sentence}</p>
+                          <p className="mt-4 text-base leading-7 text-stone-700">{currentEntry.example}</p>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
                 </div>
               </div>
 

@@ -3,8 +3,9 @@
 :root {
   --background: #f6f1ea;
   --foreground: #231913;
-  --mobile-safe-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.75rem);
-  --mobile-nav-offset: calc(env(safe-area-inset-bottom, 0px) + 7.5rem);
+  --mobile-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --mobile-nav-gap: 0.75rem;
+  --mobile-nav-offset: calc(env(safe-area-inset-bottom, 0px) + 8.75rem);
   --app-font-sans:
     "Avenir Next", "Segoe UI", "PingFang SC", "Hiragino Sans GB",
     "Microsoft YaHei", sans-serif;
@@ -34,6 +35,10 @@ body {
   color: var(--foreground);
   font-family: var(--app-font-sans), sans-serif;
   overflow-x: hidden;
+}
+
+body[data-mobile-nav-open="true"] {
+  padding-bottom: var(--mobile-nav-offset);
 }
 
 h1,
@@ -159,4 +164,8 @@ button {
   .balloon-4 {
     transform: scale(0.74);
   }
+}
+
+.mobile-bottom-nav {
+  padding-bottom: calc(var(--mobile-safe-bottom) + var(--mobile-nav-gap));
 }
