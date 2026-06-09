@@ -134,6 +134,16 @@ function parseAppendRequest(text: string) {
     .replace(/^(?:请)?(?:继续)?(?:帮我)?(?:追加|添加|补充)/, "")
     .trim();
 
+  const trailingDirectiveMatch = text.match(
+    /(?:追加|添加|补充)\s*([A-Za-z][A-Za-z0-9\s'/-]{0,120})$/i,
+  );
+  if (trailingDirectiveMatch?.[1]?.trim()) {
+    return {
+      requestedTerms: Array.from(new Set(splitRequestedItems(trailingDirectiveMatch[1].trim()))),
+      sentenceHints: [],
+    };
+  }
+
   const sentenceHints: string[] = [];
   let termSource = cleanedText;
 
@@ -365,6 +375,34 @@ export function LearningWorkspace() {
     }
   }
 
+  async function shouldUseClientOcr(file: File) {
+    if (!file.type.startsWith("image/") || file.type === "image/svg+xml") {
+      return false;
+    }
+
+    const imageUrl = URL.createObjectURL(file);
+
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const nextImage = new Image();
+        nextImage.onload = () => resolve(nextImage);
+        nextImage.onerror = () => reject(new Error("图片读取失败"));
+        nextImage.src = imageUrl;
+      });
+
+      const aspectRatio = image.height / Math.max(image.width, 1);
+      return aspectRatio >= 2.2 || image.height >= 1800;
+    } finally {
+      URL.revokeObjectURL(imageUrl);
+    }
+  }
+
+  async function recognizeImageInBrowser(file: File) {
+    const tesseract = await import("tesseract.js");
+    const result = await tesseract.default.recognize(file, "eng");
+    return (result.data.text || "").trim();
+  }
+
   function handleFiles(files: FileList | null) {
     if (!files) {
       return;
@@ -396,7 +434,7 @@ export function LearningWorkspace() {
   }
 
   async function analyzeUpload() {
-    if (queuedFiles.length === 0 && tasks.length === 0) {
+    if (queuedFiles.length === 0 && tasks.length === 0 && selectedAction !== "文字追加") {
       setStatusMessage("请先上传图片，或者先选中一个已有任务再继续追加词汇。");
       return;
     }
@@ -409,18 +447,34 @@ export function LearningWorkspace() {
           : "正在基于已有材料继续追加词汇，请稍候...",
       );
 
-      const uploadFiles = await Promise.all(queuedFiles.map((file) => optimizeImage(file)));
+      const optimizedFiles = await Promise.all(queuedFiles.map((file) => optimizeImage(file)));
+      const uploadFiles = optimizedFiles;
       const formData = new FormData();
+      let useClientOcr = false;
       let effectiveInstructions = draft;
       let effectiveRawText = selectedTask?.rawText ?? "";
       let targetTaskId = selectedTask?.id;
       let targetTaskName = selectedTask?.name;
       let targetExistingEntries = selectedTask?.entries ?? [];
       let appendRequestedTerms: string[] = [];
+      let directTermMode = false;
 
-      uploadFiles.forEach((file) => {
-        formData.append("files", file);
-      });
+      if (optimizedFiles.length === 1 && (await shouldUseClientOcr(optimizedFiles[0]))) {
+        setStatusMessage("检测到长截图，正在当前设备提取正文并重组完整句子，请稍候...");
+        const recognizedText = await recognizeImageInBrowser(optimizedFiles[0]);
+        if (recognizedText) {
+          effectiveRawText = recognizedText;
+          useClientOcr = true;
+          formData.append("localHeuristic", "1");
+          formData.append("sourceFileName", optimizedFiles[0].name);
+        }
+      }
+
+      if (!useClientOcr) {
+        uploadFiles.forEach((file) => {
+          formData.append("files", file);
+        });
+      }
 
       if (queuedFiles.length === 0 && selectedAction === "文字追加") {
         const { requestedTerms, sentenceHints } = parseAppendRequest(draft);
@@ -432,8 +486,11 @@ export function LearningWorkspace() {
           return;
         }
 
+        const appendSearchTasks =
+          sentenceHints.length > 0 ? tasks : selectedTask ? [selectedTask] : [];
+
         const matchedTarget = findAppendTarget({
-          tasks,
+          tasks: appendSearchTasks,
           selectedTaskId,
           requestedTerms,
           sentenceHints,
@@ -447,8 +504,13 @@ export function LearningWorkspace() {
               "没有在本地任务里精确定位到原句，已改为基于你输入的原句提示直接补充提取。",
             );
           } else {
-            effectiveInstructions = `请只追加这些指定词汇或短语本身：${requestedTerms.join("、")}。如果当前原文中存在完全匹配或单复数变化，请找到其所在原句并只输出该表达对应的 1 条学习词条；如果原文中不存在完全匹配，也请直接为这个词或短语生成 1 条词条，不要额外扩展其他相关词汇。`;
-            setStatusMessage("没有在当前任务原文里直接定位到该表达，已改为按你指定的词语严格补充。");
+            directTermMode = true;
+            targetTaskId = undefined;
+            targetTaskName = undefined;
+            targetExistingEntries = [];
+            effectiveRawText = "";
+            effectiveInstructions = `请直接为这些指定词汇或短语生成学习卡片：${requestedTerms.join("、")}。每个词条都需要包含一个完整自然的英文句子、准确中文意思、一个新的英文例句，以及便于朗读的发音文本。不要依赖原文，也不要扩展到未指定的其他词。`;
+            setStatusMessage("已切换为直接生成词条模式，不再依赖原文。");
           }
         } else {
           targetTaskId = matchedTarget.task.id;
@@ -456,28 +518,34 @@ export function LearningWorkspace() {
           targetExistingEntries = matchedTarget.task.entries ?? [];
           effectiveRawText = matchedTarget.matchedSentences.join("\n");
           effectiveInstructions = `请只追加这些指定词汇或短语本身：${requestedTerms.join("、")}。先找到它们所在的原句，再只输出这些指定表达各自对应的词条。不要扩展到句子里的其他高质量词汇，不要补充其他相关词条，也不要重复已有内容。若我给出了目标句子提示，请优先以该句为准。`;
-
-          if (selectedTask && matchedTarget.task.id !== selectedTask.id) {
-            setSelectedTaskId(matchedTarget.task.id);
-            setStatusMessage(`已自动定位到任务「${matchedTarget.task.name}」，将基于对应原句继续追加。`);
-          }
+          setStatusMessage(`将基于任务「${matchedTarget.task.name}」中的对应原句继续追加。`);
         }
       }
 
       formData.append("instructions", effectiveInstructions);
       formData.append("feishuLink", config.feishuLink);
+      formData.append("arkBaseUrl", config.arkBaseUrl);
+      formData.append("arkModel", config.arkModel);
       formData.append("existingRawText", effectiveRawText);
       formData.append("existingEntries", JSON.stringify(targetExistingEntries));
+      formData.append("requestedTerms", JSON.stringify(appendRequestedTerms));
+      formData.append("directTermMode", directTermMode ? "1" : "0");
 
       const response = await fetch("/api/analyze", {
         method: "POST",
         body: formData,
       });
 
-      const payload = (await response.json()) as {
+      const responseText = await response.text();
+      let payload: {
         cleanedText?: string;
         rawText?: string;
         mode?: "vision" | "vision-fallback";
+        effectiveModel?: string;
+        effectiveVisionModel?: string;
+        resolvedModelId?: string;
+        resolvedVisionModelId?: string;
+        ocrMethod?: "vision" | "tesseract";
         feishuLink?: string;
         entries?: Array<{
           id: string;
@@ -491,12 +559,29 @@ export function LearningWorkspace() {
         error?: string;
       };
 
+      try {
+        payload = JSON.parse(responseText) as typeof payload;
+      } catch {
+        throw new Error(
+          `分析接口返回了非 JSON 内容：${responseText.slice(0, 160) || "空响应"}`,
+        );
+      }
+
       if (!response.ok || payload.error) {
-        throw new Error(payload.error || "分析失败");
+        const errorMessage = payload.error || "分析失败";
+        const modelHint =
+          payload.effectiveModel || payload.effectiveVisionModel
+            ? `（文本模型：${payload.effectiveModel ?? config.arkModel}${
+                payload.resolvedModelId ? ` / ${payload.resolvedModelId}` : ""
+              }；图片识别：${payload.effectiveVisionModel ?? "视觉模型"}${
+                payload.resolvedVisionModelId ? ` / ${payload.resolvedVisionModelId}` : ""
+              }）`
+            : "";
+        throw new Error(`${errorMessage}${modelHint}`);
       }
 
       const resolvedEntries =
-        queuedFiles.length === 0 && selectedAction === "文字追加"
+        queuedFiles.length === 0 && selectedAction === "文字追加" && !directTermMode
           ? filterEntriesForRequestedTerms(payload.entries ?? [], appendRequestedTerms)
           : (payload.entries ?? []);
 
@@ -509,9 +594,12 @@ export function LearningWorkspace() {
         throw new Error("没有为你指定的词或短语生成可追加结果，请换一个表达后再试。");
       }
 
-      if (queuedFiles.length > 0) {
+      if (queuedFiles.length > 0 || (selectedAction === "文字追加" && !targetTaskId)) {
         const task = createTaskFromAnalysis({
-          fileName: payload.fileName ?? queuedFiles[0]?.name ?? "新识别任务",
+          fileName:
+            payload.fileName ??
+            (appendRequestedTerms.length > 0 ? appendRequestedTerms.join("、") : queuedFiles[0]?.name) ??
+            "新识别任务",
           rawText: payload.rawText ?? payload.cleanedText ?? "",
           entries: resolvedEntries,
           feishuLink: payload.feishuLink ?? config.feishuLink,
@@ -531,7 +619,11 @@ export function LearningWorkspace() {
       setStatusMessage(
         `分析完成，已生成 ${resolvedEntries.length} 条结果${
           targetTaskName ? `，已追加到「${targetTaskName}」` : ""
-        }。`,
+        }。文本模型：${payload.effectiveModel ?? config.arkModel}${
+          payload.resolvedModelId ? ` / ${payload.resolvedModelId}` : ""
+        }；图片识别：${payload.effectiveVisionModel ?? config.arkModel}${
+          payload.resolvedVisionModelId ? ` / ${payload.resolvedVisionModelId}` : ""
+        }${payload.ocrMethod === "tesseract" ? "（已自动切换到本地 OCR 兜底）" : ""}。`,
       );
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "分析失败，请稍后再试。");
@@ -639,13 +731,13 @@ export function LearningWorkspace() {
           </div>
         </div>
 
-        <div className="rounded-[30px] border border-white/70 bg-[#fffdfa]/80 p-4 sm:p-5">
+        <div className="min-w-0 rounded-[30px] border border-white/70 bg-[#fffdfa]/80 p-4 sm:p-5">
           <div className="space-y-4">
             <div className="flex items-start gap-3">
               <div className="mt-1 rounded-full bg-stone-900 p-2 text-white">
                 <Bot className="h-4 w-4" />
               </div>
-              <div className="max-w-[88%] rounded-[24px] rounded-tl-md bg-[#f1e8dc] px-4 py-3 text-sm leading-7 text-stone-700">
+              <div className="max-w-full break-words rounded-[24px] rounded-tl-md bg-[#f1e8dc] px-4 py-3 text-sm leading-7 text-stone-700 sm:max-w-[88%]">
                 {messages[0]}
               </div>
             </div>
@@ -656,7 +748,7 @@ export function LearningWorkspace() {
                 onClick={() =>
                   setDraft("请在原有结果基础上继续追加新的高级词汇和短语，不要重复已有词条。")
                 }
-                className="max-w-[92%] rounded-[24px] rounded-tr-md bg-stone-900 px-4 py-3 text-left text-sm leading-7 text-white transition hover:bg-stone-800"
+                className="max-w-full break-words rounded-[24px] rounded-tr-md bg-stone-900 px-4 py-3 text-left text-sm leading-7 text-white transition hover:bg-stone-800 sm:max-w-[92%]"
               >
                 {draft}
               </button>
@@ -666,7 +758,7 @@ export function LearningWorkspace() {
               <div className="mt-1 rounded-full bg-white p-2 text-stone-700 shadow-sm">
                 <Sparkles className="h-4 w-4" />
               </div>
-              <div className="max-w-[88%] rounded-[24px] rounded-tl-md border border-white/70 bg-white/90 px-4 py-3 text-sm leading-7 text-stone-700">
+              <div className="max-w-full break-words rounded-[24px] rounded-tl-md border border-white/70 bg-white/90 px-4 py-3 text-sm leading-7 text-stone-700 sm:max-w-[88%]">
                 {messages[1]}
               </div>
             </div>
@@ -717,7 +809,7 @@ export function LearningWorkspace() {
               <Languages className="h-4 w-4" />
               飞书多维表格链接
             </div>
-            <div className="flex flex-col gap-3 sm:flex-row">
+            <div className="flex min-w-0 flex-col gap-3 sm:flex-row">
               <input
                 value={config.feishuLink}
                 onChange={(event) => setFeishuLink(event.target.value)}

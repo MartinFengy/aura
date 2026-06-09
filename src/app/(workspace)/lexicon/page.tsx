@@ -483,7 +483,7 @@ export default function LexiconPage() {
           ) : null}
         </GlassCard>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <GlassCard className="p-5 sm:p-6">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
@@ -524,7 +524,7 @@ export default function LexiconPage() {
             {entriesExpanded ? (
               <>
                 <div className="mt-5 flex flex-col gap-3 rounded-[24px] border border-white/70 bg-[#fbf8f4] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-3 text-sm text-stone-600">
+                  <div className="flex min-w-0 flex-wrap items-center gap-3 text-sm text-stone-600">
                     <span>每页显示</span>
                     <select
                       value={entryPageSize}
@@ -543,11 +543,11 @@ export default function LexiconPage() {
                     <span>
                       第 {safeEntryPage} / {entryTotalPages} 页
                     </span>
-                    <span>
+                    <span className="break-words">
                       当前显示 {pagedEntries.length} / {entries.length} 条
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => setEntryPage(Math.max(1, safeEntryPage - 1))}
@@ -573,16 +573,20 @@ export default function LexiconPage() {
                   {pagedEntries.map((entry) => (
                     <div
                       key={entry.id}
-                      className="rounded-[24px] border border-white/65 bg-white/70 px-4 py-4 text-stone-700"
+                      className="min-w-0 rounded-[24px] border border-white/65 bg-white/70 px-4 py-4 text-stone-700"
                     >
-                      <p className="font-medium text-stone-900">{entry.vocabulary}</p>
+                      <p className="break-words text-[clamp(1.7rem,4vw,2rem)] font-medium text-stone-900">
+                        {entry.vocabulary}
+                      </p>
                       <p className="mt-2 text-sm leading-6 text-stone-500">{entry.chinese}</p>
-                      <p className="mt-2 text-sm leading-6 text-stone-600">{entry.example}</p>
+                      <p className="mt-2 break-words text-sm leading-6 text-stone-600">
+                        {entry.example}
+                      </p>
                       <div className="mt-3 flex flex-wrap gap-2">
                         <button
                           type="button"
                           onClick={() => speakText(entry.vocabulary)}
-                          className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
+                          className="inline-flex min-w-0 items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
                         >
                           <Volume2 className="h-3.5 w-3.5" />
                           播放词条
@@ -590,7 +594,7 @@ export default function LexiconPage() {
                         <button
                           type="button"
                           onClick={() => speakText(entry.example)}
-                          className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
+                          className="inline-flex min-w-0 items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
                         >
                           <Play className="h-3.5 w-3.5" />
                           播放例句
@@ -599,7 +603,7 @@ export default function LexiconPage() {
                           <button
                             type="button"
                             onClick={() => deleteEntry({ taskId: selectedTask.id, entryId: entry.id })}
-                            className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
+                            className="inline-flex min-w-0 items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                             删除单词

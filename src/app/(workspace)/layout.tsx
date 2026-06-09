@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/aura/app-shell";
+import { WorkspaceSessionGuard } from "@/components/aura/workspace-session-guard";
 import { AuraConfigProvider } from "@/hooks/use-aura-config";
 import { LearningTasksProvider } from "@/hooks/use-learning-tasks";
 
@@ -9,9 +10,11 @@ export default function WorkspaceLayout({
 }>) {
   return (
     <AuraConfigProvider>
-      <LearningTasksProvider>
-        <AppShell>{children}</AppShell>
-      </LearningTasksProvider>
+      <WorkspaceSessionGuard>
+        <LearningTasksProvider>
+          <AppShell>{children}</AppShell>
+        </LearningTasksProvider>
+      </WorkspaceSessionGuard>
     </AuraConfigProvider>
   );
 }

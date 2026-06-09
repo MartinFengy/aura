@@ -11,11 +11,16 @@ import {
 } from "lucide-react";
 import { GlassCard } from "@/components/aura/glass-card";
 import { useAuraConfig } from "@/hooks/use-aura-config";
-import { DEFAULT_FEISHU_LINK } from "@/lib/aura-config";
+import {
+  ARK_MODEL_OPTIONS,
+  DEFAULT_FEISHU_LINK,
+  getArkModelOption,
+} from "@/lib/aura-config";
 
 export default function SettingsPage() {
   const { config, setFeishuLink, setArkModel, setArkBaseUrl, resetFeishuLink } = useAuraConfig();
   const [statusMessage, setStatusMessage] = useState("等待操作");
+  const selectedModel = getArkModelOption(config.arkModel);
 
   return (
     <div className="space-y-6">
@@ -77,16 +82,45 @@ export default function SettingsPage() {
 
               <label className="block">
                 <span className="mb-2 block text-sm text-stone-600">模型名称</span>
-                <input
+                <select
                   value={config.arkModel}
                   onChange={(event) => setArkModel(event.target.value)}
                   className="w-full rounded-[22px] border border-white/70 bg-white/85 px-4 py-3 text-sm text-stone-700 outline-none"
-                />
+                >
+                  {ARK_MODEL_OPTIONS.map((model) => (
+                    <option key={model.value} value={model.value}>
+                      {model.label}
+                    </option>
+                  ))}
+                </select>
               </label>
+
+              <div className="rounded-[22px] border border-white/65 bg-white/75 px-4 py-4">
+                <p className="text-sm text-stone-500">可切换模型详情</p>
+                <div className="mt-3 flex flex-col gap-2">
+                  {ARK_MODEL_OPTIONS.map((model) => (
+                    <a
+                      key={model.value}
+                      href={model.detailUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={`text-sm underline-offset-4 hover:underline ${
+                        config.arkModel === model.value ? "font-medium text-stone-900" : "text-stone-600"
+                      }`}
+                    >
+                      {model.label}
+                    </a>
+                  ))}
+                </div>
+              </div>
 
               <button
                 type="button"
-                onClick={() => setStatusMessage("模型配置已记录，真实生效需同步写入 .env.local 后重启服务。")}
+                onClick={() =>
+                  setStatusMessage(
+                    `模型配置已记录。之后从当前浏览器发起的新分析请求，会使用 ${selectedModel?.label ?? config.arkModel}，对应在线推理 Model ID：${selectedModel?.apiModel ?? "未识别"}。`,
+                  )
+                }
                 className="inline-flex items-center gap-2 rounded-full bg-stone-900 px-4 py-2 text-sm text-white"
               >
                 <Save className="h-4 w-4" />
@@ -104,16 +138,19 @@ export default function SettingsPage() {
               {[
                 { label: "飞书同步目标", value: config.feishuLink },
                 { label: "Doubao 模型", value: config.arkModel },
+                { label: "在线推理 Model ID", value: selectedModel?.apiModel ?? "未识别" },
                 { label: "模型服务地址", value: config.arkBaseUrl },
                 { label: "Ark Key 设置", value: "请写入 .env.local 并重启服务" },
                 { label: "默认飞书回退", value: DEFAULT_FEISHU_LINK },
               ].map((item) => (
                 <div
                   key={item.label}
-                  className="flex items-center justify-between rounded-[22px] border border-white/65 bg-white/70 px-4 py-4 text-sm"
+                  className="flex min-w-0 flex-col gap-2 rounded-[22px] border border-white/65 bg-white/70 px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between"
                 >
-                  <span className="text-stone-500">{item.label}</span>
-                  <span className="max-w-[60%] truncate text-stone-800">{item.value}</span>
+                  <span className="min-w-0 text-stone-500">{item.label}</span>
+                  <span className="min-w-0 break-all text-left text-stone-800 sm:max-w-[60%] sm:text-right">
+                    {item.value}
+                  </span>
                 </div>
               ))}
             </div>

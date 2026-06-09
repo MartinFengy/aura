@@ -11,6 +11,7 @@ import {
 import {
   AURA_CONFIG_STORAGE_KEY,
   defaultAuraConfig,
+  normalizeArkModel,
   type AuraConfig,
 } from "@/lib/aura-config";
 
@@ -35,7 +36,12 @@ function readStoredConfig() {
       return defaultAuraConfig;
     }
 
-    return { ...defaultAuraConfig, ...(JSON.parse(stored) as Partial<AuraConfig>) };
+    const parsed = JSON.parse(stored) as Partial<AuraConfig>;
+    return {
+      ...defaultAuraConfig,
+      ...parsed,
+      arkModel: normalizeArkModel(parsed.arkModel),
+    };
   } catch {
     return defaultAuraConfig;
   }
@@ -69,7 +75,7 @@ export function AuraConfigProvider({ children }: { children: ReactNode }) {
       setFeishuLink: (value: string) =>
         setConfig((current) => ({ ...current, feishuLink: value || defaultAuraConfig.feishuLink })),
       setArkModel: (value: string) =>
-        setConfig((current) => ({ ...current, arkModel: value || defaultAuraConfig.arkModel })),
+        setConfig((current) => ({ ...current, arkModel: normalizeArkModel(value) })),
       setArkBaseUrl: (value: string) =>
         setConfig((current) => ({ ...current, arkBaseUrl: value || defaultAuraConfig.arkBaseUrl })),
       resetFeishuLink: () =>

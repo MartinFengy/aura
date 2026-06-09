@@ -1,36 +1,172 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Aura
 
-## Getting Started
+Aura（灵语 Aura）是一个面向英语学习场景的 AI 整理与听写 Web 应用。
 
-First, run the development server:
+目标是把“上传英语材料 -> 提取词汇/短语 -> 沉淀词库 -> 听写训练 -> 统计复盘 -> 飞书同步”串成一个长期使用的学习工作流。
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## 1. 项目目标
+
+- 支持上传图片、文件与文本内容，提取英语材料中的词汇、短语与句子。
+- 面向英语学习者，提供词阁（词库）、听写训练、学习数据分析等模块。
+- 支持与飞书多维表格同步，形成可长期积累的外部知识库。
+- 支持桌面端与移动端访问，保证核心流程可在手机上使用。
+
+## 2. 已完成功能
+
+### 基础产品结构
+
+- 登录页与工作区路由拆分完成。
+- 工作区已包含：
+  - `阅章`：识别与整理中心
+  - `词阁`：词库与听写中心
+  - `行迹`：学习数据分析中心
+  - `设置`：模型/飞书配置页
+
+### 识别与整理
+
+- 支持上传图片/文件并调用分析接口。
+- 支持 OCR / 模型分析后的词条生成与本地任务保存。
+- 支持结果表分页、词条删除、发音播放。
+- 支持“文字追加”入口，尝试基于当前任务继续补词。
+
+### 词阁与听写
+
+- 支持按任务查看词条。
+- 支持加入/移出听写范围。
+- 支持听写数量、重复次数、模式、范围、顺序配置。
+- 支持自动播放、重读、暂停、重新听写。
+- 支持词条发音、例句发音、原句发音。
+- 支持听写记录保存、查看详情、删除记录。
+
+### 行迹与统计
+
+- 顶部总词汇量 / 已掌握 / 模糊词汇 / 错题词汇已接真实本地数据。
+- 行迹页已支持：
+  - 学习趋势
+  - 正确率趋势
+  - 词汇掌握占比
+  - 高频错词排行
+  - 听写结果记录
+  - 词汇详情分页与展开/收起
+
+### 同步与部署
+
+- 已接入 Supabase Auth（登录、注册、重置密码流程正在继续打磨）。
+- 已接入飞书同步接口。
+- 已部署到 Vercel。
+- 已推送到 GitHub 仓库 `aura`。
+
+## 3. 当前正在开发的功能
+
+- 移动端体验修正：
+  - 竖屏布局裁切
+  - 底部导航遮挡
+  - 手机端退出按钮可见性
+- `文字追加` 逻辑修正：
+  - 精准只追加指定词/短语
+  - 不再误追加多条无关结果
+  - 在原句中定位目标词
+- 移动端与桌面端数据体验一致性修正：
+  - 登录账号隔离
+  - 本地任务与统计联动
+  - 听写记录、趋势图、高频错词同步
+
+## 4. 未完成任务
+
+- 移动端整体适配仍未完全收口，部分页面在手机竖屏下仍可能显示不完整。
+- 手机端退出登录入口仍需要最终验收。
+- `文字追加` 仍需进一步稳定，特别是：
+  - 直接输入单词时的追加
+  - “添加这个单词 xxx”这类自然语言输入
+  - 仅追加目标词，不扩展到其它词
+- 专有名词、人名、地名、机构名提取质量仍需继续提升。
+- 飞书同步虽然可用，但发音列、字段表达、权限提示仍需继续优化。
+- 重置密码流程仍有线上回跳与链接过期问题需要彻底修复。
+- 线上与本地在部分数据表现上还需继续对齐。
+
+## 5. 关键技术决策
+
+- 使用 `Next.js App Router` 作为应用骨架。
+- 使用 `Tailwind CSS` 构建整体视觉系统。
+- 使用 `Supabase` 处理认证与会话。
+- 使用 `tesseract.js` / 模型分析组合完成图片识别与词条抽取。
+- 识别任务、词条、听写记录当前主要保存在本地存储，并按登录邮箱做隔离。
+- 飞书同步采用服务端接口写入多维表格，避免前端直接暴露敏感能力。
+- 发音优先使用浏览器能力与应用内跳转页方案，降低外部 TTS 依赖。
+
+## 6. 已知 Bug 和风险
+
+- 移动端页面仍存在裁切、底部导航遮挡、操作入口不明显的问题。
+- `文字追加` 是当前最明显的不稳定点之一，用户反馈集中。
+- 重置密码邮件回跳地址与过期链接处理存在风险。
+- 部分线上流程强依赖 Supabase / 飞书权限配置，一旦环境变量或权限异常，功能会直接失败。
+- 当前数据层大量依赖本地存储，跨设备同步并不完整，容易出现“电脑端和手机端内容不一致”。
+- 行迹与词阁的统计逻辑虽然已接真实数据，但仍需继续做边界清理和删除联动校验。
+
+## 7. 下一步最推荐继续做的事情
+
+建议按下面优先级继续：
+
+1. 先修移动端主流程可用性  
+   目标：手机竖屏下能完整完成登录、识别、进入词阁、开始听写、退出登录。
+
+2. 再彻底修好 `文字追加`  
+   目标：用户输入一个词或短语时，只追加那个词/短语，并能在原句中正确定位。
+
+3. 然后收口认证与数据一致性  
+   目标：重置密码、登录状态、手机/电脑端数据隔离与同步逻辑稳定。
+
+4. 最后继续提升提词质量  
+   目标：更好地识别人名、地名、机构名、专有名词，以及更高质量短语。
+
+## 云端同步启用说明
+
+项目现在已经接入了基于 Supabase 的云端学习数据同步代码，但要真正生效，还需要先在 Supabase SQL Editor 执行下面这份迁移：
+
+`supabase/migrations/20260604_learning_sync.sql`
+
+执行完成后，应用会按下面规则工作：
+
+- 登录用户的任务数据与听写记录会写入 Supabase。
+- 同一账号在电脑端和手机端会读取同一份云端数据。
+- 当前设备里已有的本地数据，会在登录后自动合并并迁移到云端。
+- 如果云端表尚未创建或访问失败，应用会暂时回退到本地存储模式。
+
+## 项目结构
+
+当前核心目录：
+
+```text
+src/
+  app/
+    (auth)/login/page.tsx
+    (workspace)/
+      reading/page.tsx
+      lexicon/page.tsx
+      journey/page.tsx
+      settings/page.tsx
+    api/
+      analyze/route.ts
+      auth/route.ts
+      feishu/sync/route.ts
+  components/aura/
+    app-shell.tsx
+    learning-workspace.tsx
+    login-form.tsx
+  hooks/
+    use-aura-config.tsx
+    use-learning-tasks.tsx
+  lib/
+    aura-config.ts
+    aura-data.tsx
+    feishu.ts
+    learning-store.ts
+    speech.ts
+    supabase.ts
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 当前状态（简短总结）
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- 不是纯模板项目，已经是一个可运行的英语学习工作台原型。
+- 桌面端核心流程基本具备。
+- 移动端、账号流程、追加逻辑、同步稳定性仍是下一阶段重点。

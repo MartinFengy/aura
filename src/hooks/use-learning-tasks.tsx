@@ -14,10 +14,20 @@ import {
   getActiveUserKey,
   getDictationHistoryStorageKey,
   getTasksStorageKey,
+  normalizeUserKey,
+  setActiveUserKey,
   type DictationSession,
   initialRecognitionTasks,
   type RecognitionTask,
 } from "@/lib/learning-store";
+import { getSupabaseBrowserClient, hasSupabaseEnv } from "@/lib/supabase";
+import {
+  deleteDictationSessionFromCloud,
+  deleteTaskFromCloud,
+  fetchCloudLearningData,
+  upsertDictationSessionToCloud,
+  upsertTaskToCloud,
+} from "@/lib/supabase-learning";
 
 type LearningOverview = {
   totalVocabulary: number;
@@ -97,21 +107,123 @@ function readStoredHistory(userKey: string) {
   }
 }
 
+function mergeTasks(
+  localTasks: RecognitionTask[],
+  cloudTasks: RecognitionTask[],
+) {
+  const merged = new Map<string, RecognitionTask>();
+
+  for (const task of cloudTasks) {
+    merged.set(task.id, task);
+  }
+
+  for (const task of localTasks) {
+    if (!merged.has(task.id)) {
+      merged.set(task.id, task);
+    }
+  }
+
+  return Array.from(merged.values());
+}
+
+function mergeHistory(
+  localHistory: DictationSession[],
+  cloudHistory: DictationSession[],
+) {
+  const merged = new Map<string, DictationSession>();
+
+  for (const session of cloudHistory) {
+    merged.set(session.id, session);
+  }
+
+  for (const session of localHistory) {
+    if (!merged.has(session.id)) {
+      merged.set(session.id, session);
+    }
+  }
+
+  return Array.from(merged.values());
+}
+
+function sameTaskShape(left: RecognitionTask[], right: RecognitionTask[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  const leftKeys = left
+    .map((task) => `${task.id}:${task.entries.length}:${task.name}`)
+    .sort();
+  const rightKeys = right
+    .map((task) => `${task.id}:${task.entries.length}:${task.name}`)
+    .sort();
+
+  return leftKeys.every((key, index) => key === rightKeys[index]);
+}
+
+function sameHistoryShape(left: DictationSession[], right: DictationSession[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  const leftKeys = left
+    .map((session) => `${session.id}:${session.answers.length}:${session.createdAt}`)
+    .sort();
+  const rightKeys = right
+    .map((session) => `${session.id}:${session.answers.length}:${session.createdAt}`)
+    .sort();
+
+  return leftKeys.every((key, index) => key === rightKeys[index]);
+}
+
 export function LearningTasksProvider({ children }: { children: ReactNode }) {
   const [activeUserKey, setActiveUserKeyState] = useState("guest");
+  const [cloudUserId, setCloudUserId] = useState<null | string>(null);
   const [tasks, setTasks] = useState<RecognitionTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [practiceHistory, setPracticeHistory] = useState<DictationSession[]>([]);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    const syncUser = () => {
-      setActiveUserKeyState(getActiveUserKey());
+    const browserClient = getSupabaseBrowserClient();
+    const syncUser = async () => {
+      const nextActiveUserKey = getActiveUserKey();
+      setActiveUserKeyState(nextActiveUserKey);
+
+      if (!browserClient || !hasSupabaseEnv()) {
+        setCloudUserId(null);
+        return;
+      }
+
+      const {
+        data: { user },
+      } = await browserClient.auth.getUser();
+
+      setCloudUserId(user?.id ?? null);
+
+      if (user?.email) {
+        const normalizedEmail = normalizeUserKey(user.email);
+        setActiveUserKeyState(normalizedEmail);
+        if (normalizedEmail !== nextActiveUserKey) {
+          setActiveUserKey(user.email);
+        }
+      }
     };
 
-    syncUser();
+    void syncUser();
     window.addEventListener("storage", syncUser);
     window.addEventListener("aura-active-user-change", syncUser as EventListener);
+
+    const authSubscription = browserClient?.auth.onAuthStateChange((_event, session) => {
+      const user = session?.user ?? null;
+      setCloudUserId(user?.id ?? null);
+
+      if (user?.email) {
+        setActiveUserKeyState(normalizeUserKey(user.email));
+        setActiveUserKey(user.email);
+      } else {
+        setActiveUserKeyState(getActiveUserKey());
+      }
+    });
 
     return () => {
       window.removeEventListener("storage", syncUser);
@@ -119,21 +231,117 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
         "aura-active-user-change",
         syncUser as EventListener,
       );
+      authSubscription?.data.subscription.unsubscribe();
     };
   }, []);
 
   useEffect(() => {
-    const nextTasks = readStoredTasks(activeUserKey);
-    const nextHistory = readStoredHistory(activeUserKey);
-    const frame = window.requestAnimationFrame(() => {
-      setTasks(nextTasks);
-      setPracticeHistory(nextHistory);
-      setSelectedTaskId(nextTasks[0]?.id ?? "");
-      setHydrated(true);
-    });
+    let cancelled = false;
 
-    return () => window.cancelAnimationFrame(frame);
-  }, [activeUserKey]);
+    async function hydrateData({ forceCloudRefresh = false } = {}) {
+      const nextTasks = readStoredTasks(activeUserKey);
+      const nextHistory = readStoredHistory(activeUserKey);
+      const browserClient = getSupabaseBrowserClient();
+
+      if (!cloudUserId || !browserClient || !hasSupabaseEnv()) {
+        if (cancelled) {
+          return;
+        }
+
+        setTasks(nextTasks);
+        setPracticeHistory(nextHistory);
+        setSelectedTaskId(nextTasks[0]?.id ?? "");
+        setHydrated(true);
+        return;
+      }
+
+      try {
+        const cloudData = await fetchCloudLearningData(browserClient, cloudUserId);
+        const mergedTasks = mergeTasks(nextTasks, cloudData.tasks);
+        const mergedHistory = mergeHistory(nextHistory, cloudData.practiceHistory);
+
+        const needsTaskMigration =
+          cloudData.tasks.length === 0 && mergedTasks.length > 0;
+        const needsHistoryMigration =
+          cloudData.practiceHistory.length === 0 && mergedHistory.length > 0;
+
+        if (needsTaskMigration) {
+          await Promise.all(
+            mergedTasks.map((task) => upsertTaskToCloud(browserClient, cloudUserId, task)),
+          );
+        }
+
+        if (needsHistoryMigration) {
+          await Promise.all(
+            mergedHistory.map((session) =>
+              upsertDictationSessionToCloud(browserClient, cloudUserId, session),
+            ),
+          );
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        const resolvedTasks =
+          forceCloudRefresh || cloudData.tasks.length > 0 ? cloudData.tasks : mergedTasks;
+        const resolvedHistory =
+          forceCloudRefresh || cloudData.practiceHistory.length > 0
+            ? cloudData.practiceHistory
+            : mergedHistory;
+
+        setTasks(resolvedTasks);
+        setPracticeHistory(resolvedHistory);
+        setSelectedTaskId(resolvedTasks[0]?.id ?? "");
+        setHydrated(true);
+
+        if (!sameTaskShape(nextTasks, resolvedTasks)) {
+          window.localStorage.setItem(
+            getTasksStorageKey(activeUserKey),
+            JSON.stringify(resolvedTasks),
+          );
+        }
+
+        if (!sameHistoryShape(nextHistory, resolvedHistory)) {
+          window.localStorage.setItem(
+            getDictationHistoryStorageKey(activeUserKey),
+            JSON.stringify(resolvedHistory),
+          );
+        }
+      } catch (error) {
+        console.error("Failed to hydrate cloud learning data", error);
+        if (cancelled) {
+          return;
+        }
+
+        setTasks(nextTasks);
+        setPracticeHistory(nextHistory);
+        setSelectedTaskId(nextTasks[0]?.id ?? "");
+        setHydrated(true);
+      }
+    }
+
+    void hydrateData();
+
+    const handleVisibilityRefresh = () => {
+      if (document.visibilityState === "visible") {
+        void hydrateData({ forceCloudRefresh: true });
+      }
+    };
+
+    const handleFocusRefresh = () => {
+      void hydrateData({ forceCloudRefresh: true });
+    };
+
+    window.addEventListener("focus", handleFocusRefresh);
+    document.addEventListener("visibilitychange", handleVisibilityRefresh);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", handleFocusRefresh);
+      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+    };
+  }, [activeUserKey, cloudUserId]);
 
   useEffect(() => {
     if (!hydrated || typeof window === "undefined") {
@@ -233,12 +441,24 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
     const task = createTaskFromUpload(fileName);
     setTasks((current) => [task, ...current]);
     setSelectedTaskId(task.id);
+    const browserClient = getSupabaseBrowserClient();
+    if (browserClient && cloudUserId) {
+      void upsertTaskToCloud(browserClient, cloudUserId, task).catch((error) => {
+        console.error("Failed to create task in cloud", error);
+      });
+    }
     return task;
   }
 
   function addTaskFromAnalysis(task: RecognitionTask) {
     setTasks((current) => [task, ...current]);
     setSelectedTaskId(task.id);
+    const browserClient = getSupabaseBrowserClient();
+    if (browserClient && cloudUserId) {
+      void upsertTaskToCloud(browserClient, cloudUserId, task).catch((error) => {
+        console.error("Failed to sync task to cloud", error);
+      });
+    }
     return task;
   }
 
@@ -248,6 +468,7 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
     entries: RecognitionTask["entries"];
     feishuLink?: string;
   }) {
+    let nextTask: null | RecognitionTask = null;
     setTasks((current) =>
       current.map((task) => {
         if (task.id !== params.taskId) {
@@ -264,15 +485,22 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
           ),
         ];
 
-        return {
+        nextTask = {
           ...task,
           rawText: [task.rawText, params.rawText].filter(Boolean).join("\n\n"),
           feishuLink: params.feishuLink ?? task.feishuLink,
           entries: mergedEntries,
         };
+        return nextTask;
       }),
     );
     setSelectedTaskId(params.taskId);
+    const browserClient = getSupabaseBrowserClient();
+    if (browserClient && cloudUserId && nextTask) {
+      void upsertTaskToCloud(browserClient, cloudUserId, nextTask).catch((error) => {
+        console.error("Failed to append task analysis to cloud", error);
+      });
+    }
   }
 
   function replaceTaskEntries(params: {
@@ -280,24 +508,40 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
     rawText?: string;
     entries: RecognitionTask["entries"];
   }) {
+    let nextTask: null | RecognitionTask = null;
     setTasks((current) =>
       current.map((task) =>
         task.id === params.taskId
-          ? {
+          ? (nextTask = {
               ...task,
               rawText: params.rawText ?? task.rawText,
               entries: params.entries,
-            }
+            })
           : task,
       ),
     );
     setSelectedTaskId(params.taskId);
+    const browserClient = getSupabaseBrowserClient();
+    if (browserClient && cloudUserId && nextTask) {
+      void upsertTaskToCloud(browserClient, cloudUserId, nextTask).catch((error) => {
+        console.error("Failed to replace task entries in cloud", error);
+      });
+    }
   }
 
   function renameTask(taskId: string, name: string) {
+    let nextTask: null | RecognitionTask = null;
     setTasks((current) =>
-      current.map((task) => (task.id === taskId ? { ...task, name } : task)),
+      current.map((task) =>
+        task.id === taskId ? (nextTask = { ...task, name }) : task,
+      ),
     );
+    const browserClient = getSupabaseBrowserClient();
+    if (browserClient && cloudUserId && nextTask) {
+      void upsertTaskToCloud(browserClient, cloudUserId, nextTask).catch((error) => {
+        console.error("Failed to rename task in cloud", error);
+      });
+    }
   }
 
   function deleteTask(taskId: string) {
@@ -308,19 +552,35 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
       );
       return next;
     });
+    const browserClient = getSupabaseBrowserClient();
+    if (browserClient && cloudUserId) {
+      void deleteTaskFromCloud(browserClient, cloudUserId, taskId).catch((error) => {
+        console.error("Failed to delete task from cloud", error);
+      });
+    }
   }
 
   function deleteEntry(params: { taskId: string; entryId: string }) {
+    let nextTask: null | RecognitionTask = null;
     setTasks((current) =>
-      current.map((task) =>
-        task.id === params.taskId
-          ? {
-              ...task,
-              entries: task.entries.filter((entry) => entry.id !== params.entryId),
-            }
-          : task,
-      ),
+      current.map((task) => {
+        if (task.id !== params.taskId) {
+          return task;
+        }
+
+        nextTask = {
+          ...task,
+          entries: task.entries.filter((entry) => entry.id !== params.entryId),
+        };
+        return nextTask;
+      }),
     );
+    const browserClient = getSupabaseBrowserClient();
+    if (browserClient && cloudUserId && nextTask) {
+      void upsertTaskToCloud(browserClient, cloudUserId, nextTask).catch((error) => {
+        console.error("Failed to delete entry from cloud task", error);
+      });
+    }
   }
 
   function recordDictationSession(session: Omit<DictationSession, "id" | "createdAt">) {
@@ -337,6 +597,14 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
     };
 
     setPracticeHistory((current) => [nextSession, ...current].slice(0, 60));
+    const browserClient = getSupabaseBrowserClient();
+    if (browserClient && cloudUserId) {
+      void upsertDictationSessionToCloud(browserClient, cloudUserId, nextSession).catch(
+        (error) => {
+          console.error("Failed to record dictation session in cloud", error);
+        },
+      );
+    }
     return nextSession;
   }
 
@@ -344,6 +612,14 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
     setPracticeHistory((current) =>
       current.filter((session) => session.id !== sessionId),
     );
+    const browserClient = getSupabaseBrowserClient();
+    if (browserClient && cloudUserId) {
+      void deleteDictationSessionFromCloud(browserClient, cloudUserId, sessionId).catch(
+        (error) => {
+          console.error("Failed to delete dictation session from cloud", error);
+        },
+      );
+    }
   }
 
   return (

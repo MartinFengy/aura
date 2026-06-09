@@ -57,7 +57,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(236,225,214,0.85),_rgba(245,241,235,0.92)_42%,_#f6f1ea_100%)] text-stone-900">
+    <main className="relative min-h-screen overflow-x-hidden bg-[radial-gradient(circle_at_top,_rgba(236,225,214,0.85),_rgba(245,241,235,0.92)_42%,_#f6f1ea_100%)] text-stone-900">
       <BalloonBackground />
 
       <div className="mx-auto flex min-h-screen max-w-[1600px] gap-6 px-4 py-4 sm:px-6 lg:px-8">
@@ -131,23 +131,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col gap-6 pb-24 lg:pb-6">
+        <div className="flex min-w-0 flex-1 flex-col gap-6 pb-[var(--mobile-nav-offset)] lg:pb-6">
           <GlassCard className="p-4 sm:p-5 lg:hidden">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-stone-500">LINGYU</p>
                 <h2 className="mt-2 text-3xl font-semibold text-stone-900">Aura</h2>
               </div>
-              <button
-                type="button"
-                onClick={() => setMobileOpen((current) => !current)}
-                className="rounded-full border border-white/70 bg-white/80 p-3 text-stone-700"
-              >
-                {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="inline-flex items-center gap-2 rounded-full bg-stone-900 px-3 py-2 text-sm text-stone-50 shadow-lg shadow-stone-900/15 transition hover:bg-stone-800"
+                >
+                  <LogOut className="h-4 w-4" />
+                  退出
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileOpen((current) => !current)}
+                  className="rounded-full border border-white/70 bg-white/80 p-3 text-stone-700"
+                  aria-label={mobileOpen ? "关闭菜单" : "打开菜单"}
+                >
+                  {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+                </button>
+              </div>
             </div>
             {mobileOpen ? (
-              <div className="mt-4 grid gap-2">
+              <div className="mt-4 grid max-h-[70vh] gap-2 overflow-y-auto pr-1">
                 {navItems.map(({ label, href, icon: Icon }) => {
                   const active = pathname.startsWith(href);
 
@@ -168,6 +179,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </Link>
                   );
                 })}
+                <div className="mt-2 rounded-[24px] border border-white/65 bg-white/75 px-4 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-full bg-[#efe4d5] p-2 text-stone-700">
+                      <UserRound className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-stone-800">Aura Learner</p>
+                      <p className="text-xs text-stone-500">{activeItem.description}</p>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="mt-1 flex w-full items-center justify-between rounded-2xl bg-stone-900 px-4 py-3 text-sm text-stone-50 shadow-lg shadow-stone-900/15 transition hover:bg-stone-800"
+                >
+                  <span className="flex items-center gap-2">
+                    <LogOut className="h-4 w-4" />
+                    退出登录
+                  </span>
+                  <ChevronRight className="h-4 w-4 opacity-80" />
+                </button>
               </div>
             ) : null}
           </GlassCard>
@@ -205,7 +238,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </div>
 
-      <nav className="fixed inset-x-3 bottom-3 z-20 lg:hidden">
+      <nav
+        className="fixed inset-x-3 z-20 lg:hidden"
+        style={{ bottom: "var(--mobile-safe-bottom)" }}
+      >
         <div className="glass-panel flex items-center justify-between px-3 py-2">
           {navItems.map(({ label, shortLabel, href, icon: Icon }) => {
             const active = pathname.startsWith(href);
