@@ -375,9 +375,54 @@ export function LearningWorkspace() {
     }
   }
 
-  async function shouldUseClientOcr(file: File) {
+  type PreparedUploadImage = {
+    files: File[];
+    preferClientOcr: boolean;
+  };
+
+  function mergeOcrTranscriptParts(parts: string[]) {
+    const normalizedParts = parts
+      .map((part) =>
+        part
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean),
+      )
+      .filter((lines) => lines.length > 0);
+
+    const mergedLines: string[] = [];
+
+    for (const lines of normalizedParts) {
+      const dedupedLines = lines.filter((line, index, current) => {
+        if (index === 0) {
+          return true;
+        }
+        return line.toLowerCase() !== current[index - 1]?.toLowerCase();
+      });
+
+      let overlap = 0;
+      const maxOverlap = Math.min(8, mergedLines.length, dedupedLines.length);
+      for (let size = maxOverlap; size >= 1; size -= 1) {
+        const mergedSuffix = mergedLines.slice(-size).map((line) => line.toLowerCase());
+        const partPrefix = dedupedLines.slice(0, size).map((line) => line.toLowerCase());
+        if (mergedSuffix.join("\n") === partPrefix.join("\n")) {
+          overlap = size;
+          break;
+        }
+      }
+
+      mergedLines.push(...dedupedLines.slice(overlap));
+    }
+
+    return mergedLines.join("\n").trim();
+  }
+
+  async function prepareImageForUpload(file: File): Promise<PreparedUploadImage> {
     if (!file.type.startsWith("image/") || file.type === "image/svg+xml") {
-      return false;
+      return {
+        files: [file],
+        preferClientOcr: false,
+      };
     }
 
     const imageUrl = URL.createObjectURL(file);
@@ -391,7 +436,76 @@ export function LearningWorkspace() {
       });
 
       const aspectRatio = image.height / Math.max(image.width, 1);
-      return aspectRatio >= 2.2 || image.height >= 1800;
+      const preferClientOcr = aspectRatio >= 1.9 || image.height >= 1100;
+      if (aspectRatio < 1.8 && image.height < 1200) {
+        return {
+          files: [file],
+          preferClientOcr,
+        };
+      }
+
+      const chunkHeight = preferClientOcr ? 960 : 1280;
+      const overlap = preferClientOcr ? 180 : 160;
+      const chunks: File[] = [];
+
+      let offsetY = 0;
+      let chunkIndex = 0;
+      while (offsetY < image.height) {
+        const currentHeight = Math.min(chunkHeight, image.height - offsetY);
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = currentHeight;
+
+        const context = canvas.getContext("2d");
+        if (!context) {
+          return {
+            files: [file],
+            preferClientOcr,
+          };
+        }
+
+        context.drawImage(
+          image,
+          0,
+          offsetY,
+          image.width,
+          currentHeight,
+          0,
+          0,
+          image.width,
+          currentHeight,
+        );
+
+        const blob = await new Promise<Blob | null>((resolve) => {
+          canvas.toBlob(resolve, "image/jpeg", 0.86);
+        });
+
+        if (!blob) {
+          return {
+            files: [file],
+            preferClientOcr,
+          };
+        }
+
+        chunks.push(
+          new File(
+            [blob],
+            `${file.name.replace(/\.[^.]+$/, "")}-part-${chunkIndex + 1}.jpg`,
+            { type: "image/jpeg" },
+          ),
+        );
+
+        chunkIndex += 1;
+        if (offsetY + currentHeight >= image.height) {
+          break;
+        }
+        offsetY += Math.max(currentHeight - overlap, 1);
+      }
+
+      return {
+        files: chunks.length > 0 ? chunks : [file],
+        preferClientOcr,
+      };
     } finally {
       URL.revokeObjectURL(imageUrl);
     }
@@ -417,6 +531,17 @@ export function LearningWorkspace() {
 
   function removeFile(fileName: string) {
     setQueuedFiles((current) => current.filter((file) => file.name !== fileName));
+  }
+
+  function confirmDeleteTask(taskId: string, taskName: string) {
+    if (typeof window !== "undefined") {
+      const shouldDelete = window.confirm(`确认删除任务「${taskName}」吗？删除后当前识别结果也会一并移除。`);
+      if (!shouldDelete) {
+        return;
+      }
+    }
+
+    deleteTask(taskId);
   }
 
   function startRename(taskId: string, currentName: string) {
@@ -448,35 +573,63 @@ export function LearningWorkspace() {
       );
 
       const optimizedFiles = await Promise.all(queuedFiles.map((file) => optimizeImage(file)));
-      const uploadFiles = optimizedFiles;
+      const preparedImages = await Promise.all(
+        optimizedFiles.map((file) => prepareImageForUpload(file)),
+      );
+      const splitFileGroups = preparedImages.map((item) => item.files);
+      const uploadFiles = splitFileGroups.flat();
+      const shouldPreferClientOcr = preparedImages.some((item) => item.preferClientOcr);
       const formData = new FormData();
-      let useClientOcr = false;
+      let useClientTranscript = false;
       let effectiveInstructions = draft;
-      let effectiveRawText = selectedTask?.rawText ?? "";
-      let targetTaskId = selectedTask?.id;
-      let targetTaskName = selectedTask?.name;
-      let targetExistingEntries = selectedTask?.entries ?? [];
+      let effectiveRawText = "";
+      let targetTaskId = undefined as string | undefined;
+      let targetTaskName = undefined as string | undefined;
+      let targetExistingEntries: RecognitionTask["entries"] = [];
       let appendRequestedTerms: string[] = [];
       let directTermMode = false;
 
-      if (optimizedFiles.length === 1 && (await shouldUseClientOcr(optimizedFiles[0]))) {
-        setStatusMessage("检测到长截图，正在当前设备提取正文并重组完整句子，请稍候...");
-        const recognizedText = await recognizeImageInBrowser(optimizedFiles[0]);
-        if (recognizedText) {
-          effectiveRawText = recognizedText;
-          useClientOcr = true;
+      if (shouldPreferClientOcr) {
+        setStatusMessage("检测到长截图，正在本地分段识别正文，请稍候...");
+        const transcriptParts: string[] = [];
+
+        for (let index = 0; index < uploadFiles.length; index += 1) {
+          setStatusMessage(`长截图正文识别中（${index + 1}/${uploadFiles.length}）...`);
+          const transcriptPart = await recognizeImageInBrowser(uploadFiles[index]);
+          if (transcriptPart.trim()) {
+            transcriptParts.push(transcriptPart.trim());
+          }
+        }
+
+        const mergedTranscript = mergeOcrTranscriptParts(transcriptParts);
+        if (mergedTranscript.length >= 120) {
+          useClientTranscript = true;
+          effectiveRawText = mergedTranscript;
           formData.append("localHeuristic", "1");
+          if (optimizedFiles.length === 1) {
+            formData.append("sourceFileName", optimizedFiles[0].name);
+          }
+          setStatusMessage("正文识别完成，正在用模型拼接句子并提取词汇，请稍候...");
+        } else {
+          setStatusMessage("本地正文识别不足，已切换为服务端 OCR-first 识别，请稍候...");
+          formData.append("ocrFirst", "1");
+        }
+      }
+
+      if (!useClientTranscript) {
+        uploadFiles.forEach((file) => {
+          formData.append("files", file);
+        });
+        if (optimizedFiles.length === 1) {
           formData.append("sourceFileName", optimizedFiles[0].name);
         }
       }
 
-      if (!useClientOcr) {
-        uploadFiles.forEach((file) => {
-          formData.append("files", file);
-        });
-      }
-
       if (queuedFiles.length === 0 && selectedAction === "文字追加") {
+        effectiveRawText = selectedTask?.rawText ?? "";
+        targetTaskId = selectedTask?.id;
+        targetTaskName = selectedTask?.name;
+        targetExistingEntries = selectedTask?.entries ?? [];
         const { requestedTerms, sentenceHints } = parseAppendRequest(draft);
         appendRequestedTerms = requestedTerms;
 
@@ -537,6 +690,7 @@ export function LearningWorkspace() {
       });
 
       const responseText = await response.text();
+      const responseContentType = response.headers.get("content-type") ?? "";
       let payload: {
         cleanedText?: string;
         rawText?: string;
@@ -562,6 +716,26 @@ export function LearningWorkspace() {
       try {
         payload = JSON.parse(responseText) as typeof payload;
       } catch {
+        const normalizedText = responseText.trim();
+        const isTimeoutResponse =
+          normalizedText.includes("FUNCTION_INVOCATION_TIMEOUT") ||
+          normalizedText.includes("The Serverless Function has timed out") ||
+          response.status === 504;
+        const isHtmlResponse =
+          responseContentType.includes("text/html") ||
+          normalizedText.startsWith("<!doctype html") ||
+          normalizedText.startsWith("<html");
+
+        if (isTimeoutResponse) {
+          throw new Error(
+            "上传分析超时了。当前这次图片识别耗时过长，服务还没来得及返回结果。请优先上传更清晰的单张截图，或减少一次上传的图片数量后重试。",
+          );
+        }
+
+        if (isHtmlResponse) {
+          throw new Error("分析服务暂时返回了异常页面，请稍后重试一次。");
+        }
+
         throw new Error(
           `分析接口返回了非 JSON 内容：${responseText.slice(0, 160) || "空响应"}`,
         );
@@ -714,7 +888,7 @@ export function LearningWorkspace() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => deleteTask(task.id)}
+                          onClick={() => confirmDeleteTask(task.id, task.name)}
                           className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs ${
                             active ? "bg-white/15 text-white" : "bg-white text-stone-700"
                           }`}

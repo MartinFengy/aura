@@ -471,7 +471,7 @@ function JourneyContent() {
                     <Trash2 className="h-4 w-4" />
                     删除记录
                   </button>
-                  <div className="grid gap-2 sm:grid-cols-4">
+                  <div className="grid w-full grid-cols-4 gap-2">
                   {[
                     { label: "总题数", value: `${session.totalQuestions}` },
                     { label: "正确", value: `${session.correctCount}` },
@@ -480,10 +480,10 @@ function JourneyContent() {
                   ].map((item) => (
                     <div
                       key={item.label}
-                      className="rounded-[18px] border border-white/65 bg-[#fffdfa] px-3 py-3 text-center"
+                      className="rounded-[18px] border border-white/65 bg-[#fffdfa] px-2 py-3 text-center sm:px-3"
                     >
-                      <p className="text-xs text-stone-500">{item.label}</p>
-                      <p className="mt-1 text-lg font-semibold text-stone-900">{item.value}</p>
+                      <p className="text-[11px] text-stone-500 sm:text-xs">{item.label}</p>
+                      <p className="mt-1 text-base font-semibold text-stone-900 sm:text-lg">{item.value}</p>
                     </div>
                   ))}
                   </div>

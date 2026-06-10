@@ -23,6 +23,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const { learningOverview } = useLearningTasks();
+  const showLearningStats = pathname.startsWith("/lexicon");
   const activeItem = useMemo(
     () => navItems.find((item) => pathname.startsWith(item.href)) ?? navItems[0],
     [pathname],
@@ -216,34 +217,36 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             ) : null}
           </GlassCard>
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {stats.map(({ label, value, icon: Icon, focus }) => (
-              <button
-                key={label}
-                type="button"
-                onClick={() => {
-                  if (typeof window !== "undefined") {
-                    window.location.href = `/journey?focus=${focus}#journey-word-details`;
-                  } else {
-                    router.push(`/journey?focus=${focus}#journey-word-details`);
-                  }
-                }}
-                className="text-left"
-              >
-                <GlassCard className="p-4 transition hover:bg-white/90">
-                  <div className="flex items-start justify-between">
-                    <p className="text-sm text-stone-500">{label}</p>
-                    <div className="rounded-full bg-[#f1e8dc] p-2 text-stone-700">
-                      <Icon className="h-4 w-4" />
+          {showLearningStats ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {stats.map(({ label, value, icon: Icon, focus }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== "undefined") {
+                      window.location.href = `/journey?focus=${focus}#journey-word-details`;
+                    } else {
+                      router.push(`/journey?focus=${focus}#journey-word-details`);
+                    }
+                  }}
+                  className="text-left"
+                >
+                  <GlassCard className="p-3 sm:p-4 transition hover:bg-white/90">
+                    <div className="flex items-start justify-between">
+                      <p className="text-[11px] text-stone-500 sm:text-sm">{label}</p>
+                      <div className="rounded-full bg-[#f1e8dc] p-1.5 text-stone-700 sm:p-2">
+                        <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                      </div>
                     </div>
-                  </div>
-                  <p className="mt-4 text-3xl font-semibold tracking-[0.04em] text-stone-900">
-                    {value}
-                  </p>
-                </GlassCard>
-              </button>
-            ))}
-          </div>
+                    <p className="mt-3 text-2xl font-semibold tracking-[0.04em] text-stone-900 sm:mt-4 sm:text-3xl">
+                      {value}
+                    </p>
+                  </GlassCard>
+                </button>
+              ))}
+            </div>
+          ) : null}
 
           {children}
         </div>

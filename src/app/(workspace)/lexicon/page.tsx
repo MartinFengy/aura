@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { GlassCard } from "@/components/aura/glass-card";
 import { useLearningTasks } from "@/hooks/use-learning-tasks";
+import { getRecognitionEntryQuality } from "@/lib/recognition-quality";
 import type { DictationMode, DictationResult } from "@/lib/learning-store";
 import { speakSequence, speakText, stopSpeaking } from "@/lib/speech";
 
@@ -263,6 +264,30 @@ export default function LexiconPage() {
     setTaskNameDraft("");
   }
 
+  function confirmDeleteTask(taskId: string, taskName: string) {
+    if (typeof window !== "undefined") {
+      const shouldDelete = window.confirm(`确认删除任务「${taskName}」吗？删除后该任务下的词条也会一起移除。`);
+      if (!shouldDelete) {
+        return;
+      }
+    }
+
+    deleteTask(taskId);
+  }
+
+  function confirmDeleteEntry(entryId: string, vocabulary: string) {
+    if (typeof window !== "undefined") {
+      const shouldDelete = window.confirm(`确认删除单词「${vocabulary}」吗？删除后无法恢复。`);
+      if (!shouldDelete) {
+        return;
+      }
+    }
+
+    if (selectedTask) {
+      deleteEntry({ taskId: selectedTask.id, entryId });
+    }
+  }
+
   function handleAnswer(result: DictationResult) {
     if (!currentEntry) {
       return;
@@ -374,7 +399,7 @@ export default function LexiconPage() {
             <Headphones className="h-4 w-4" />
             识别任务
           </div>
-          <h3 className="mt-3 text-2xl font-semibold text-stone-900">任务库</h3>
+          <h3 className="mt-3 text-lg font-semibold text-stone-900 sm:text-2xl">任务库</h3>
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
@@ -452,7 +477,7 @@ export default function LexiconPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => deleteTask(task.id)}
+                      onClick={() => confirmDeleteTask(task.id, task.name)}
                       className={`rounded-full px-3 py-1.5 text-xs ${
                         isActive
                           ? "bg-white/20 text-white"
@@ -503,24 +528,24 @@ export default function LexiconPage() {
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <p className="text-sm uppercase tracking-[0.25em] text-stone-500">当前任务词条</p>
-                <h2 className="mt-2 text-3xl font-semibold text-stone-900">
+                <h2 className="mt-2 break-all text-[1.35rem] font-semibold leading-tight text-stone-900 sm:text-3xl">
                   {selectedTask?.name ?? "未选择任务"}
                 </h2>
-                <p className="mt-3 max-w-2xl text-sm leading-8 text-stone-600">
+                <p className="mt-3 max-w-2xl text-[13px] leading-7 text-stone-600 sm:text-sm sm:leading-8">
                   当前任务可单独浏览、删除词条，也可以把多个任务组合成一次听写范围。
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setEntriesExpanded((current) => !current)}
-                className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-sm text-stone-700"
+                className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-[13px] text-stone-700 sm:text-sm"
               >
                 {entriesExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                 {entriesExpanded ? "收起识别结果" : "展开识别结果"}
               </button>
             </div>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3">
               {[
                 { label: "任务时间", value: selectedTask?.createdAt ?? "--" },
                 { label: "词条数量", value: `${entries.length} 条` },
@@ -528,18 +553,18 @@ export default function LexiconPage() {
               ].map((item) => (
                 <div
                   key={item.label}
-                  className="rounded-[22px] border border-white/70 bg-white/80 px-4 py-4"
+                  className="rounded-[20px] border border-white/70 bg-white/80 px-3 py-3 sm:rounded-[22px] sm:px-4 sm:py-4"
                 >
-                  <p className="text-xs text-stone-500">{item.label}</p>
-                  <p className="mt-2 text-sm font-medium text-stone-800">{item.value}</p>
+                  <p className="text-[11px] text-stone-500 sm:text-xs">{item.label}</p>
+                  <p className="mt-1 text-[12px] font-medium leading-5 text-stone-800 sm:mt-2 sm:text-sm">{item.value}</p>
                 </div>
               ))}
             </div>
 
             {entriesExpanded ? (
               <>
-                <div className="mt-5 flex flex-col gap-3 rounded-[24px] border border-white/70 bg-[#fbf8f4] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex min-w-0 flex-wrap items-center gap-3 text-sm text-stone-600">
+              <div className="mt-5 flex flex-col gap-3 rounded-[24px] border border-white/70 bg-[#fbf8f4] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-stone-600 sm:gap-3 sm:text-sm">
                     <span>每页显示</span>
                     <select
                       value={entryPageSize}
@@ -547,7 +572,7 @@ export default function LexiconPage() {
                         setEntryPageSize(Number(event.target.value));
                         setEntryPage(1);
                       }}
-                      className="rounded-full border border-white/70 bg-white px-3 py-2 text-sm text-stone-700 outline-none"
+                      className="rounded-full border border-white/70 bg-white px-3 py-2 text-xs text-stone-700 outline-none sm:text-sm"
                     >
                       {[8, 12, 16].map((size) => (
                         <option key={size} value={size}>
@@ -567,7 +592,7 @@ export default function LexiconPage() {
                       type="button"
                       onClick={() => setEntryPage(Math.max(1, safeEntryPage - 1))}
                       disabled={safeEntryPage === 1}
-                      className="inline-flex items-center gap-1 rounded-full border border-white/70 bg-white px-3 py-2 text-sm text-stone-700 disabled:opacity-40"
+                      className="inline-flex items-center gap-1 rounded-full border border-white/70 bg-white px-3 py-2 text-xs text-stone-700 disabled:opacity-40 sm:text-sm"
                     >
                       <ChevronLeft className="h-4 w-4" />
                       上一页
@@ -576,7 +601,7 @@ export default function LexiconPage() {
                       type="button"
                       onClick={() => setEntryPage(Math.min(entryTotalPages, safeEntryPage + 1))}
                       disabled={safeEntryPage === entryTotalPages}
-                      className="inline-flex items-center gap-1 rounded-full border border-white/70 bg-white px-3 py-2 text-sm text-stone-700 disabled:opacity-40"
+                      className="inline-flex items-center gap-1 rounded-full border border-white/70 bg-white px-3 py-2 text-xs text-stone-700 disabled:opacity-40 sm:text-sm"
                     >
                       下一页
                       <ChevronRight className="h-4 w-4" />
@@ -585,23 +610,28 @@ export default function LexiconPage() {
                 </div>
 
                 <div className="mt-6 grid gap-3 lg:grid-cols-2">
-                  {pagedEntries.map((entry) => (
+                  {pagedEntries.map((entry) => {
+                    const quality = getRecognitionEntryQuality(entry);
+
+                    return (
                     <div
                       key={entry.id}
                       className="min-w-0 rounded-[24px] border border-white/65 bg-white/70 px-4 py-4 text-stone-700"
                     >
-                      <p className="break-words text-[clamp(1.7rem,4vw,2rem)] font-medium text-stone-900">
+                      <p className="break-words text-[clamp(1.02rem,3.8vw,1.35rem)] font-medium leading-snug text-stone-900 sm:text-[clamp(1.5rem,3vw,2rem)]">
                         {entry.vocabulary}
                       </p>
-                      <p className="mt-2 text-sm leading-6 text-stone-500">{entry.chinese}</p>
-                      <p className="mt-2 break-words text-sm leading-6 text-stone-600">
-                        {entry.example}
+                      <p className="mt-2 text-[12px] leading-5 text-stone-500 sm:text-sm sm:leading-6">
+                        {quality.invalidChinese ? "中文释义未通过质检，请重新识别或删除该词条。" : entry.chinese}
+                      </p>
+                      <p className="mt-2 break-words text-[12px] leading-5 text-stone-600 sm:text-sm sm:leading-6">
+                        {quality.invalidExample ? "例句未通过质检，请重新识别或删除该词条。" : entry.example}
                       </p>
                       <div className="mt-3 flex flex-wrap gap-2">
                         <button
                           type="button"
                           onClick={() => speakText(entry.vocabulary)}
-                          className="inline-flex min-w-0 items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
+                          className="inline-flex min-w-0 items-center gap-1 rounded-full border border-stone-200 bg-white px-2.5 py-1.5 text-[10px] text-stone-700 sm:gap-2 sm:px-3 sm:text-xs"
                         >
                           <Volume2 className="h-3.5 w-3.5" />
                           播放词条
@@ -609,7 +639,8 @@ export default function LexiconPage() {
                         <button
                           type="button"
                           onClick={() => speakText(entry.example)}
-                          className="inline-flex min-w-0 items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
+                          disabled={quality.invalidExample}
+                          className="inline-flex min-w-0 items-center gap-1 rounded-full border border-stone-200 bg-white px-2.5 py-1.5 text-[10px] text-stone-700 sm:gap-2 sm:px-3 sm:text-xs"
                         >
                           <Play className="h-3.5 w-3.5" />
                           播放例句
@@ -617,8 +648,8 @@ export default function LexiconPage() {
                         {selectedTask ? (
                           <button
                             type="button"
-                            onClick={() => deleteEntry({ taskId: selectedTask.id, entryId: entry.id })}
-                            className="inline-flex min-w-0 items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
+                            onClick={() => confirmDeleteEntry(entry.id, entry.vocabulary)}
+                            className="inline-flex min-w-0 items-center gap-1 rounded-full border border-stone-200 bg-white px-2.5 py-1.5 text-[10px] text-stone-700 sm:gap-2 sm:px-3 sm:text-xs"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                             删除单词
@@ -626,7 +657,7 @@ export default function LexiconPage() {
                         ) : null}
                       </div>
                     </div>
-                  ))}
+                  )})}
                 </div>
               </>
             ) : null}
@@ -899,37 +930,37 @@ export default function LexiconPage() {
           </GlassCard>
 
           <GlassCard className="p-5 sm:p-6">
-            <div className="flex flex-col gap-5">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <h3 className="text-3xl font-semibold text-stone-900">听写进行中</h3>
-                  <p className="mt-2 text-xl text-stone-500">
+              <div className="flex flex-col gap-5">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                  <h3 className="text-2xl font-semibold text-stone-900 sm:text-3xl">听写进行中</h3>
+                  <p className="mt-2 text-base text-stone-500 sm:text-xl">
                     当前第 {Math.min(safeQuestionIndex + 1, totalQuestions)} 题 / 共 {totalQuestions} 题
                   </p>
                 </div>
-              <div className="flex gap-3">
+              <div className="grid grid-cols-3 gap-3">
                   <button
                     type="button"
                     onClick={() => playPrompt(currentEntry, dictationMode, repeatCount)}
-                    className="inline-flex items-center gap-2 rounded-[18px] border border-stone-200 bg-white px-5 py-3 text-stone-800 shadow-sm"
+                    className="inline-flex flex-col items-center justify-center gap-2 rounded-[18px] border border-stone-200 bg-white px-3 py-3 text-sm text-stone-800 shadow-sm sm:flex-row sm:px-5"
                   >
-                    <Volume2 className="h-5 w-5" />
+                    <Volume2 className="h-4 w-4 sm:h-5 sm:w-5" />
                     重读
                   </button>
                   <button
                     type="button"
                     onClick={stopSpeaking}
-                    className="inline-flex items-center gap-2 rounded-[18px] border border-stone-200 bg-white px-5 py-3 text-stone-800 shadow-sm"
+                    className="inline-flex flex-col items-center justify-center gap-2 rounded-[18px] border border-stone-200 bg-white px-3 py-3 text-sm text-stone-800 shadow-sm sm:flex-row sm:px-5"
                   >
-                    <CirclePause className="h-5 w-5" />
+                    <CirclePause className="h-4 w-4 sm:h-5 sm:w-5" />
                     暂停
                   </button>
                   <button
                     type="button"
                     onClick={() => currentEntry && speakText(currentEntry.sentence)}
-                    className="inline-flex items-center gap-2 rounded-[18px] border border-stone-200 bg-white px-5 py-3 text-stone-800 shadow-sm"
+                    className="inline-flex flex-col items-center justify-center gap-2 rounded-[18px] border border-stone-200 bg-white px-3 py-3 text-sm text-stone-800 shadow-sm sm:flex-row sm:px-5"
                   >
-                    <Headphones className="h-5 w-5" />
+                    <Headphones className="h-4 w-4 sm:h-5 sm:w-5" />
                     原句发音
                   </button>
                 </div>
@@ -946,51 +977,56 @@ export default function LexiconPage() {
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                         <div>
                           <p className="text-sm uppercase tracking-[0.25em] text-stone-500">Session Complete</p>
-                          <h4 className="mt-2 text-3xl font-semibold text-stone-900">本次听写已完成</h4>
-                          <p className="mt-2 text-lg text-stone-600">
+                          <h4 className="mt-2 text-2xl font-semibold text-stone-900 sm:text-3xl">本次听写已完成</h4>
+                          <p className="mt-2 text-base text-stone-600 sm:text-lg">
                             共作答 {sessionSummary.answeredCount} 题，得分 {sessionSummary.score} 分
                           </p>
                         </div>
                         <div className="rounded-[24px] bg-stone-900 px-5 py-4 text-white">
                           <p className="text-sm text-stone-300">正确率</p>
-                          <p className="mt-1 text-3xl font-semibold">{sessionSummary.score}%</p>
+                          <p className="mt-1 text-2xl font-semibold sm:text-3xl">{sessionSummary.score}%</p>
                         </div>
                       </div>
                       <div className="mt-5 grid gap-3 sm:grid-cols-3">
                         <div className="rounded-[20px] bg-[#d8f2df] px-4 py-4">
                           <p className="text-sm text-stone-600">掌握</p>
-                          <p className="mt-2 text-2xl font-semibold text-stone-900">{sessionSummary.correctCount}</p>
+                          <p className="mt-2 text-xl font-semibold text-stone-900 sm:text-2xl">{sessionSummary.correctCount}</p>
                         </div>
                         <div className="rounded-[20px] bg-[#fff1bf] px-4 py-4">
                           <p className="text-sm text-stone-600">模糊</p>
-                          <p className="mt-2 text-2xl font-semibold text-stone-900">{sessionSummary.fuzzyCount}</p>
+                          <p className="mt-2 text-xl font-semibold text-stone-900 sm:text-2xl">{sessionSummary.fuzzyCount}</p>
                         </div>
                         <div className="rounded-[20px] bg-[#ffd7d7] px-4 py-4">
                           <p className="text-sm text-stone-600">不认识</p>
-                          <p className="mt-2 text-2xl font-semibold text-stone-900">{sessionSummary.wrongCount}</p>
+                          <p className="mt-2 text-xl font-semibold text-stone-900 sm:text-2xl">{sessionSummary.wrongCount}</p>
                         </div>
                       </div>
                     </div>
                   ) : (
                     <>
                       <p className="text-5xl text-stone-400">🔊</p>
-                      <p className="text-4xl text-stone-500">
+                      <p className="text-2xl leading-tight text-stone-500 sm:text-4xl">
                         {dictationStarted ? "请听发音后作答" : "点击开始听写后开始播放"}
                       </p>
                       <button
                         type="button"
                         onClick={() => setShowAnswer((current) => !current)}
                         disabled={!dictationStarted}
-                        className="inline-flex items-center gap-2 rounded-[18px] border border-stone-200 bg-white px-5 py-3 text-2xl font-medium text-stone-900 shadow-sm"
+                        className="inline-flex items-center gap-2 rounded-[18px] border border-stone-200 bg-white px-5 py-3 text-lg font-medium text-stone-900 shadow-sm sm:text-2xl"
                       >
-                        <Eye className="h-6 w-6" />
+                        <Eye className="h-5 w-5 sm:h-6 sm:w-6" />
                         {showAnswer ? "隐藏答案" : "显示答案"}
                       </button>
 
                       {showAnswer && currentEntry ? (
                         <div className="w-full rounded-[24px] bg-[#f5efe8] px-5 py-5 text-left">
+                          {(() => {
+                            const quality = getRecognitionEntryQuality(currentEntry);
+
+                            return (
+                            <>
                           <div className="flex flex-wrap items-center gap-3">
-                            <p className="text-2xl font-semibold text-stone-900">
+                            <p className="text-xl font-semibold text-stone-900 sm:text-2xl">
                               {currentEntry.vocabulary}
                             </p>
                             <button
@@ -1004,6 +1040,7 @@ export default function LexiconPage() {
                             <button
                               type="button"
                               onClick={() => speakText(currentEntry.example)}
+                              disabled={quality.invalidExample}
                               className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-4 py-2 text-sm text-stone-700"
                             >
                               <Play className="h-4 w-4" />
@@ -1018,9 +1055,16 @@ export default function LexiconPage() {
                               播放原句
                             </button>
                           </div>
-                          <p className="mt-2 text-lg text-stone-600">{currentEntry.chinese}</p>
-                          <p className="mt-4 text-base leading-7 text-stone-700">{currentEntry.sentence}</p>
-                          <p className="mt-4 text-base leading-7 text-stone-700">{currentEntry.example}</p>
+                          <p className="mt-2 text-base text-stone-600 sm:text-lg">
+                            {quality.invalidChinese ? "中文释义未通过质检，请重新识别或删除该词条。" : currentEntry.chinese}
+                          </p>
+                          <p className="mt-4 text-sm leading-7 text-stone-700 sm:text-base">{currentEntry.sentence}</p>
+                          <p className="mt-4 text-sm leading-7 text-stone-700 sm:text-base">
+                            {quality.invalidExample ? "例句未通过质检，请重新识别或删除该词条。" : currentEntry.example}
+                          </p>
+                            </>
+                            );
+                          })()}
                         </div>
                       ) : null}
                     </>
@@ -1028,32 +1072,32 @@ export default function LexiconPage() {
                 </div>
               </div>
 
-              <div className="flex flex-wrap justify-center gap-5">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <button
                   type="button"
                   onClick={() => handleAnswer("认识")}
                   disabled={!dictationStarted || !currentEntry || sessionFinished}
-                  className="inline-flex items-center gap-3 rounded-[18px] bg-[#09a63e] px-8 py-4 text-2xl font-semibold text-white disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-3 rounded-[18px] bg-[#09a63e] px-6 py-4 text-xl font-semibold text-white disabled:opacity-50 sm:px-8 sm:text-2xl"
                 >
-                  <CheckCircle2 className="h-7 w-7" />
+                  <CheckCircle2 className="h-6 w-6 sm:h-7 sm:w-7" />
                   认识
                 </button>
                 <button
                   type="button"
                   onClick={() => handleAnswer("模糊")}
                   disabled={!dictationStarted || !currentEntry || sessionFinished}
-                  className="inline-flex items-center gap-3 rounded-[18px] bg-[#f4b500] px-8 py-4 text-2xl font-semibold text-white disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-3 rounded-[18px] bg-[#f4b500] px-6 py-4 text-xl font-semibold text-white disabled:opacity-50 sm:px-8 sm:text-2xl"
                 >
-                  <Play className="h-7 w-7" />
+                  <Play className="h-6 w-6 sm:h-7 sm:w-7" />
                   模糊
                 </button>
                 <button
                   type="button"
                   onClick={() => handleAnswer("不认识")}
                   disabled={!dictationStarted || !currentEntry || sessionFinished}
-                  className="inline-flex items-center gap-3 rounded-[18px] bg-[#ef2323] px-8 py-4 text-2xl font-semibold text-white disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-3 rounded-[18px] bg-[#ef2323] px-6 py-4 text-xl font-semibold text-white disabled:opacity-50 sm:px-8 sm:text-2xl"
                 >
-                  <CircleX className="h-7 w-7" />
+                  <CircleX className="h-6 w-6 sm:h-7 sm:w-7" />
                   不认识
                 </button>
               </div>

@@ -18,6 +18,7 @@ import { GlassCard } from "@/components/aura/glass-card";
 import { LearningWorkspace } from "@/components/aura/learning-workspace";
 import { useAuraConfig } from "@/hooks/use-aura-config";
 import { useLearningTasks } from "@/hooks/use-learning-tasks";
+import { getRecognitionEntryQuality } from "@/lib/recognition-quality";
 import { speakText } from "@/lib/speech";
 
 export default function ReadingPage() {
@@ -35,6 +36,19 @@ export default function ReadingPage() {
     () => entries.slice((currentPage - 1) * pageSize, currentPage * pageSize),
     [currentPage, entries, pageSize],
   );
+
+  function confirmDeleteEntry(entryId: string, vocabulary: string) {
+    if (typeof window !== "undefined") {
+      const shouldDelete = window.confirm(`确认删除词条「${vocabulary}」吗？删除后无法恢复。`);
+      if (!shouldDelete) {
+        return;
+      }
+    }
+
+    if (selectedTask) {
+      deleteEntry({ taskId: selectedTask.id, entryId });
+    }
+  }
 
   async function syncToFeishu() {
     if (!selectedTask || entries.length === 0) {
@@ -93,15 +107,15 @@ export default function ReadingPage() {
               <ScanSearch className="h-4 w-4" />
               识别结果表
             </div>
-            <h3 className="mt-3 text-2xl font-semibold text-stone-900">
+            <h3 className="mt-3 break-words text-lg font-semibold text-stone-900 sm:text-2xl">
               {selectedTask?.name ?? "当前识别任务"}
             </h3>
-            <p className="mt-2 text-sm leading-7 text-stone-600">
+            <p className="mt-2 text-[13px] leading-6 text-stone-600 sm:text-sm sm:leading-7">
               已识别 {entries.length} 条词汇记录，支持完整句子、单词短语、中文意思、例句和多段发音试听。
             </p>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
             {[
               { label: "识别任务", value: `${tasks.length} 个`, icon: Sparkles },
               { label: "当前词条", value: `${entries.length} 条`, icon: Languages },
@@ -109,39 +123,39 @@ export default function ReadingPage() {
             ].map(({ label, value, icon: Icon }) => (
               <div
                 key={label}
-                className="rounded-[24px] border border-white/70 bg-white/75 px-4 py-4"
+                className="rounded-[22px] border border-white/70 bg-white/75 px-3 py-3 sm:rounded-[24px] sm:px-4 sm:py-4"
               >
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-stone-500">{label}</p>
+                  <p className="text-[11px] text-stone-500 sm:text-sm">{label}</p>
                   <Icon className="h-4 w-4 text-stone-700" />
                 </div>
-                <p className="mt-3 text-2xl font-semibold text-stone-900">{value}</p>
+                <p className="mt-2 text-lg font-semibold text-stone-900 sm:mt-3 sm:text-2xl">{value}</p>
               </div>
             ))}
             <button
               type="button"
               onClick={syncToFeishu}
               disabled={isSyncing}
-              className="rounded-[24px] border border-stone-900 bg-stone-900 px-4 py-4 text-left text-white disabled:opacity-70"
+              className="rounded-[22px] border border-stone-900 bg-stone-900 px-3 py-3 text-left text-white disabled:opacity-70 sm:rounded-[24px] sm:px-4 sm:py-4"
             >
               <div className="flex items-center justify-between">
-                <p className="text-sm text-stone-300">飞书同步</p>
+                <p className="text-[11px] text-stone-300 sm:text-sm">飞书同步</p>
                 <Link2 className="h-4 w-4" />
               </div>
-              <p className="mt-3 text-lg font-semibold">
+              <p className="mt-2 text-sm font-semibold sm:mt-3 sm:text-lg">
                 {isSyncing ? "同步中..." : "同步飞书文档"}
               </p>
             </button>
             <button
               type="button"
               onClick={openFeishuLink}
-              className="rounded-[24px] border border-white/70 bg-white/80 px-4 py-4 text-left text-stone-900"
+              className="rounded-[22px] border border-white/70 bg-white/80 px-3 py-3 text-left text-stone-900 sm:rounded-[24px] sm:px-4 sm:py-4"
             >
               <div className="flex items-center justify-between">
-                <p className="text-sm text-stone-500">飞书链接</p>
+                <p className="text-[11px] text-stone-500 sm:text-sm">飞书链接</p>
                 <Link2 className="h-4 w-4" />
               </div>
-              <p className="mt-3 text-lg font-semibold">打开飞书文档</p>
+              <p className="mt-2 text-sm font-semibold sm:mt-3 sm:text-lg">打开飞书文档</p>
             </button>
           </div>
         </div>
@@ -210,7 +224,76 @@ export default function ReadingPage() {
           </div>
         ) : null}
 
-        <div className="mt-6 overflow-hidden rounded-[28px] border border-white/70 bg-white/80">
+        <div className="mt-6 space-y-3 md:hidden">
+          {pagedEntries.map((entry) => {
+            const quality = getRecognitionEntryQuality(entry);
+
+            return (
+              <div
+                key={entry.id}
+                className="rounded-[24px] border border-white/70 bg-white/85 px-4 py-4"
+              >
+                <div className="flex flex-wrap items-start gap-2">
+                  <div className="rounded-full bg-[#f3eadf] px-3 py-1.5 text-sm font-medium text-stone-900">
+                    {entry.vocabulary}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => speakText(entry.vocabulary)}
+                    className="inline-flex items-center gap-1 rounded-full bg-stone-900 px-3 py-1.5 text-[11px] text-white"
+                  >
+                    <Volume2 className="h-3.5 w-3.5" />
+                    词条发音
+                  </button>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-stone-700">{entry.sentence}</p>
+                <button
+                  type="button"
+                  onClick={() => speakText(entry.sentence)}
+                  className="mt-2 inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-[11px] text-stone-700"
+                >
+                  <Languages className="h-3.5 w-3.5" />
+                  原句发音
+                </button>
+                <div className="mt-4 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
+                  <p className="text-[11px] text-stone-500">中文意思</p>
+                  <p className="mt-1 text-sm leading-6 text-stone-700">
+                    {quality.invalidChinese ? "中文释义未通过质检，请重新识别或删除该词条。" : entry.chinese}
+                  </p>
+                </div>
+                <div className="mt-3 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
+                  <p className="text-[11px] text-stone-500">例句</p>
+                  <p className="mt-1 text-sm leading-6 text-stone-700">
+                    {quality.invalidExample ? "例句未通过质检，请重新识别或删除该词条。" : entry.example}
+                  </p>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => speakText(entry.example)}
+                    disabled={quality.invalidExample}
+                    className="inline-flex items-center gap-1 rounded-full bg-[#f3eadf] px-3 py-1.5 text-[11px] text-stone-800 disabled:opacity-40"
+                  >
+                    <Mic2 className="h-3.5 w-3.5" />
+                    例句发音
+                  </button>
+                  {selectedTask ? (
+                    <button
+                      type="button"
+                      onClick={() => confirmDeleteEntry(entry.id, entry.vocabulary)}
+                      className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-[11px] text-stone-700"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      删除词条
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="mt-6 hidden overflow-hidden rounded-[28px] border border-white/70 bg-white/80 md:block">
           <div className="overflow-x-auto">
             <table className="min-w-full text-left">
               <thead className="border-b border-stone-200/70 bg-[#f7f1ea] text-sm text-stone-500">
@@ -222,7 +305,10 @@ export default function ReadingPage() {
                 </tr>
               </thead>
               <tbody>
-                {pagedEntries.map((entry) => (
+                {pagedEntries.map((entry) => {
+                  const quality = getRecognitionEntryQuality(entry);
+
+                  return (
                   <tr key={entry.id} className="border-b border-stone-100 last:border-b-0">
                     <td className="px-4 py-4 align-top text-sm leading-7 text-stone-700">
                       <div className="flex flex-wrap items-start gap-3">
@@ -254,15 +340,18 @@ export default function ReadingPage() {
                       </div>
                     </td>
                     <td className="px-4 py-4 align-top text-sm leading-7 text-stone-700">
-                      {entry.chinese}
+                      {quality.invalidChinese ? "中文释义未通过质检，请重新识别或删除该词条。" : entry.chinese}
                     </td>
                     <td className="px-4 py-4 align-top text-sm leading-7 text-stone-700">
                       <div className="flex flex-wrap items-start gap-3">
-                        <span className="max-w-[460px]">{entry.example}</span>
+                        <span className="max-w-[460px]">
+                          {quality.invalidExample ? "例句未通过质检，请重新识别或删除该词条。" : entry.example}
+                        </span>
                         <button
                           type="button"
                           onClick={() => speakText(entry.example)}
-                          className="inline-flex items-center gap-1 rounded-full bg-[#f3eadf] px-3 py-1.5 text-xs text-stone-800"
+                          disabled={quality.invalidExample}
+                          className="inline-flex items-center gap-1 rounded-full bg-[#f3eadf] px-3 py-1.5 text-xs text-stone-800 disabled:opacity-40"
                         >
                           <Mic2 className="h-3.5 w-3.5" />
                           例句发音
@@ -270,9 +359,7 @@ export default function ReadingPage() {
                         {selectedTask ? (
                           <button
                             type="button"
-                            onClick={() =>
-                              deleteEntry({ taskId: selectedTask.id, entryId: entry.id })
-                            }
+                            onClick={() => confirmDeleteEntry(entry.id, entry.vocabulary)}
                             className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -282,7 +369,7 @@ export default function ReadingPage() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                )})}
               </tbody>
             </table>
           </div>

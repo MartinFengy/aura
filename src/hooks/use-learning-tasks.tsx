@@ -20,6 +20,7 @@ import {
   initialRecognitionTasks,
   type RecognitionTask,
 } from "@/lib/learning-store";
+import { sanitizeRecognitionTaskEntries } from "@/lib/recognition-quality";
 import { getSupabaseBrowserClient, hasSupabaseEnv } from "@/lib/supabase";
 import {
   deleteDictationSessionFromCloud,
@@ -81,7 +82,7 @@ function readStoredTasks(userKey: string) {
     }
 
     const parsed = JSON.parse(stored) as RecognitionTask[];
-    return parsed.length > 0 ? parsed : [];
+    return parsed.length > 0 ? parsed.map((task) => sanitizeRecognitionTaskEntries(task)) : [];
   } catch {
     return [];
   }
@@ -114,12 +115,12 @@ function mergeTasks(
   const merged = new Map<string, RecognitionTask>();
 
   for (const task of cloudTasks) {
-    merged.set(task.id, task);
+    merged.set(task.id, sanitizeRecognitionTaskEntries(task));
   }
 
   for (const task of localTasks) {
     if (!merged.has(task.id)) {
-      merged.set(task.id, task);
+      merged.set(task.id, sanitizeRecognitionTaskEntries(task));
     }
   }
 
@@ -451,15 +452,16 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
   }
 
   function addTaskFromAnalysis(task: RecognitionTask) {
-    setTasks((current) => [task, ...current]);
-    setSelectedTaskId(task.id);
+    const sanitizedTask = sanitizeRecognitionTaskEntries(task);
+    setTasks((current) => [sanitizedTask, ...current]);
+    setSelectedTaskId(sanitizedTask.id);
     const browserClient = getSupabaseBrowserClient();
     if (browserClient && cloudUserId) {
-      void upsertTaskToCloud(browserClient, cloudUserId, task).catch((error) => {
+      void upsertTaskToCloud(browserClient, cloudUserId, sanitizedTask).catch((error) => {
         console.error("Failed to sync task to cloud", error);
       });
     }
-    return task;
+    return sanitizedTask;
   }
 
   function appendAnalysisToTask(params: {
@@ -485,12 +487,12 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
           ),
         ];
 
-        nextTask = {
+        nextTask = sanitizeRecognitionTaskEntries({
           ...task,
           rawText: [task.rawText, params.rawText].filter(Boolean).join("\n\n"),
           feishuLink: params.feishuLink ?? task.feishuLink,
           entries: mergedEntries,
-        };
+        });
         return nextTask;
       }),
     );
@@ -512,11 +514,11 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
     setTasks((current) =>
       current.map((task) =>
         task.id === params.taskId
-          ? (nextTask = {
+          ? (nextTask = sanitizeRecognitionTaskEntries({
               ...task,
               rawText: params.rawText ?? task.rawText,
               entries: params.entries,
-            })
+            }))
           : task,
       ),
     );
