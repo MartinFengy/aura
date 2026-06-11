@@ -5,7 +5,7 @@
   --foreground: #231913;
   --mobile-safe-bottom: env(safe-area-inset-bottom, 0px);
   --mobile-nav-gap: 0.75rem;
-  --mobile-nav-offset: calc(env(safe-area-inset-bottom, 0px) + 8.75rem);
+  --mobile-nav-offset: calc(env(safe-area-inset-bottom, 0px) + 9.5rem);
   --app-font-sans:
     "Avenir Next", "Segoe UI", "PingFang SC", "Hiragino Sans GB",
     "Microsoft YaHei", sans-serif;
@@ -167,5 +167,10 @@ button {
 }
 
 .mobile-bottom-nav {
-  padding-bottom: calc(var(--mobile-safe-bottom) + var(--mobile-nav-gap));
+  bottom: calc(var(--mobile-safe-bottom) + 0.5rem);
+  padding-bottom: 0;
+}
+
+.mobile-bottom-nav .glass-panel {
+  padding-bottom: calc(var(--mobile-safe-bottom) + 0.35rem);
 }

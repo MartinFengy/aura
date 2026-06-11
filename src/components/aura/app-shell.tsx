@@ -253,7 +253,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <nav
-        className="mobile-bottom-nav fixed inset-x-3 bottom-0 z-30 lg:hidden"
+        className="mobile-bottom-nav fixed inset-x-3 z-30 lg:hidden"
       >
         <div className="glass-panel flex items-center justify-between px-3 py-2">
           {navItems.map(({ label, shortLabel, href, icon: Icon }) => {

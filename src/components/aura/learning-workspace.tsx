@@ -347,7 +347,16 @@ export function LearningWorkspace() {
       });
 
       const maxWidth = 1600;
-      const scale = image.width > maxWidth ? maxWidth / image.width : 1;
+      const maxHeight = 2400;
+      const widthScale = image.width > maxWidth ? maxWidth / image.width : 1;
+      const heightScale = image.height > maxHeight ? maxHeight / image.height : 1;
+      const scale = Math.min(widthScale, heightScale, 1);
+      const shouldReencode =
+        file.type !== "image/jpeg" || file.size > 450 * 1024 || image.height > 1200;
+
+      if (scale >= 0.999 && !shouldReencode) {
+        return file;
+      }
       const canvas = document.createElement("canvas");
       canvas.width = Math.max(1, Math.round(image.width * scale));
       canvas.height = Math.max(1, Math.round(image.height * scale));
@@ -360,7 +369,7 @@ export function LearningWorkspace() {
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
       const blob = await new Promise<Blob | null>((resolve) => {
-        canvas.toBlob(resolve, "image/jpeg", 0.84);
+        canvas.toBlob(resolve, "image/jpeg", 0.86);
       });
 
       if (!blob) {
@@ -377,144 +386,20 @@ export function LearningWorkspace() {
 
   type PreparedUploadImage = {
     files: File[];
-    preferClientOcr: boolean;
+    preferVisionOcr: boolean;
   };
-
-  function mergeOcrTranscriptParts(parts: string[]) {
-    const normalizedParts = parts
-      .map((part) =>
-        part
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean),
-      )
-      .filter((lines) => lines.length > 0);
-
-    const mergedLines: string[] = [];
-
-    for (const lines of normalizedParts) {
-      const dedupedLines = lines.filter((line, index, current) => {
-        if (index === 0) {
-          return true;
-        }
-        return line.toLowerCase() !== current[index - 1]?.toLowerCase();
-      });
-
-      let overlap = 0;
-      const maxOverlap = Math.min(8, mergedLines.length, dedupedLines.length);
-      for (let size = maxOverlap; size >= 1; size -= 1) {
-        const mergedSuffix = mergedLines.slice(-size).map((line) => line.toLowerCase());
-        const partPrefix = dedupedLines.slice(0, size).map((line) => line.toLowerCase());
-        if (mergedSuffix.join("\n") === partPrefix.join("\n")) {
-          overlap = size;
-          break;
-        }
-      }
-
-      mergedLines.push(...dedupedLines.slice(overlap));
-    }
-
-    return mergedLines.join("\n").trim();
-  }
 
   async function prepareImageForUpload(file: File): Promise<PreparedUploadImage> {
     if (!file.type.startsWith("image/") || file.type === "image/svg+xml") {
       return {
         files: [file],
-        preferClientOcr: false,
+        preferVisionOcr: false,
       };
     }
-
-    const imageUrl = URL.createObjectURL(file);
-
-    try {
-      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const nextImage = new Image();
-        nextImage.onload = () => resolve(nextImage);
-        nextImage.onerror = () => reject(new Error("图片读取失败"));
-        nextImage.src = imageUrl;
-      });
-
-      const aspectRatio = image.height / Math.max(image.width, 1);
-      const preferClientOcr = aspectRatio >= 1.9 || image.height >= 1100;
-      if (aspectRatio < 1.8 && image.height < 1200) {
-        return {
-          files: [file],
-          preferClientOcr,
-        };
-      }
-
-      const chunkHeight = preferClientOcr ? 960 : 1280;
-      const overlap = preferClientOcr ? 180 : 160;
-      const chunks: File[] = [];
-
-      let offsetY = 0;
-      let chunkIndex = 0;
-      while (offsetY < image.height) {
-        const currentHeight = Math.min(chunkHeight, image.height - offsetY);
-        const canvas = document.createElement("canvas");
-        canvas.width = image.width;
-        canvas.height = currentHeight;
-
-        const context = canvas.getContext("2d");
-        if (!context) {
-          return {
-            files: [file],
-            preferClientOcr,
-          };
-        }
-
-        context.drawImage(
-          image,
-          0,
-          offsetY,
-          image.width,
-          currentHeight,
-          0,
-          0,
-          image.width,
-          currentHeight,
-        );
-
-        const blob = await new Promise<Blob | null>((resolve) => {
-          canvas.toBlob(resolve, "image/jpeg", 0.86);
-        });
-
-        if (!blob) {
-          return {
-            files: [file],
-            preferClientOcr,
-          };
-        }
-
-        chunks.push(
-          new File(
-            [blob],
-            `${file.name.replace(/\.[^.]+$/, "")}-part-${chunkIndex + 1}.jpg`,
-            { type: "image/jpeg" },
-          ),
-        );
-
-        chunkIndex += 1;
-        if (offsetY + currentHeight >= image.height) {
-          break;
-        }
-        offsetY += Math.max(currentHeight - overlap, 1);
-      }
-
-      return {
-        files: chunks.length > 0 ? chunks : [file],
-        preferClientOcr,
-      };
-    } finally {
-      URL.revokeObjectURL(imageUrl);
-    }
-  }
-
-  async function recognizeImageInBrowser(file: File) {
-    const tesseract = await import("tesseract.js");
-    const result = await tesseract.default.recognize(file, "eng");
-    return (result.data.text || "").trim();
+    return {
+      files: [file],
+      preferVisionOcr: true,
+    };
   }
 
   function handleFiles(files: FileList | null) {
@@ -576,11 +461,9 @@ export function LearningWorkspace() {
       const preparedImages = await Promise.all(
         optimizedFiles.map((file) => prepareImageForUpload(file)),
       );
-      const splitFileGroups = preparedImages.map((item) => item.files);
-      const uploadFiles = splitFileGroups.flat();
-      const shouldPreferClientOcr = preparedImages.some((item) => item.preferClientOcr);
+      const filesToUpload = optimizedFiles;
+      const shouldPreferVisionOcr = preparedImages.some((item) => item.preferVisionOcr);
       const formData = new FormData();
-      let useClientTranscript = false;
       let effectiveInstructions = draft;
       let effectiveRawText = "";
       let targetTaskId = undefined as string | undefined;
@@ -589,40 +472,16 @@ export function LearningWorkspace() {
       let appendRequestedTerms: string[] = [];
       let directTermMode = false;
 
-      if (shouldPreferClientOcr) {
-        setStatusMessage("检测到长截图，正在本地分段识别正文，请稍候...");
-        const transcriptParts: string[] = [];
-
-        for (let index = 0; index < uploadFiles.length; index += 1) {
-          setStatusMessage(`长截图正文识别中（${index + 1}/${uploadFiles.length}）...`);
-          const transcriptPart = await recognizeImageInBrowser(uploadFiles[index]);
-          if (transcriptPart.trim()) {
-            transcriptParts.push(transcriptPart.trim());
-          }
-        }
-
-        const mergedTranscript = mergeOcrTranscriptParts(transcriptParts);
-        if (mergedTranscript.length >= 120) {
-          useClientTranscript = true;
-          effectiveRawText = mergedTranscript;
-          formData.append("localHeuristic", "1");
-          if (optimizedFiles.length === 1) {
-            formData.append("sourceFileName", optimizedFiles[0].name);
-          }
-          setStatusMessage("正文识别完成，正在用模型拼接句子并提取词汇，请稍候...");
-        } else {
-          setStatusMessage("本地正文识别不足，已切换为服务端 OCR-first 识别，请稍候...");
-          formData.append("ocrFirst", "1");
-        }
+      if (shouldPreferVisionOcr) {
+        formData.append("preferVision", "1");
+        setStatusMessage("正在将整张图片直接交给 AI 识别全文并统一抽词，请稍候...");
       }
 
-      if (!useClientTranscript) {
-        uploadFiles.forEach((file) => {
-          formData.append("files", file);
-        });
-        if (optimizedFiles.length === 1) {
-          formData.append("sourceFileName", optimizedFiles[0].name);
-        }
+      filesToUpload.forEach((file) => {
+        formData.append("files", file);
+      });
+      if (optimizedFiles.length === 1) {
+        formData.append("sourceFileName", optimizedFiles[0].name);
       }
 
       if (queuedFiles.length === 0 && selectedAction === "文字追加") {
@@ -800,7 +659,8 @@ export function LearningWorkspace() {
         }${payload.ocrMethod === "tesseract" ? "（已自动切换到本地 OCR 兜底）" : ""}。`,
       );
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "分析失败，请稍后再试。");
+      const errorMessage = error instanceof Error ? error.message : "分析失败，请稍后再试。";
+      setStatusMessage(errorMessage);
     } finally {
       setIsAnalyzing(false);
     }

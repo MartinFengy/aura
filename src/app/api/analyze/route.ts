@@ -492,6 +492,30 @@ function normalizeSentence(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function collapseRepeatedSentenceFragments(value: string) {
+  const normalized = normalizeSentence(value)
+    .replace(/\s*<[^>\n]{1,24}\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const repeatedClausePattern =
+    /(.{24,}?\b[A-Za-z][A-Za-z'-]*\b)\s+(?:<[^>\n]{1,24}\s+)?\1(?=[\s,.;:!?]|$)/i;
+  let collapsed = normalized;
+
+  for (let index = 0; index < 3; index += 1) {
+    const next = collapsed.replace(repeatedClausePattern, "$1");
+    if (next === collapsed) {
+      break;
+    }
+    collapsed = next.trim();
+  }
+
+  return collapsed
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function normalizeVocabulary(value: string) {
   return value
     .replace(/[“”’']/g, "")
@@ -507,6 +531,25 @@ function normalizeSentenceForComparison(value: string) {
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
+}
+
+function mergeTranscriptVariants(...variants: string[]) {
+  const mergedSentences: string[] = [];
+  const seen = new Set<string>();
+
+  for (const variant of variants) {
+    for (const sentence of splitTranscriptSentences(variant)) {
+      const cleanedSentence = collapseRepeatedSentenceFragments(sentence);
+      const key = normalizeSentenceForComparison(cleanedSentence);
+      if (!key || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      mergedSentences.push(cleanedSentence);
+    }
+  }
+
+  return mergedSentences.join(" ").trim();
 }
 
 const NORMALIZED_HEURISTIC_CHINESE_GLOSSARY = Object.fromEntries(
@@ -1127,7 +1170,7 @@ function isValidLearningEntry(sentence: string, entry: StructuredEntry) {
 
 function sanitizeStructuredEntry(entry: StructuredEntry) {
   const vocabulary = normalizeVocabulary(entry.vocabulary);
-  const sentence = normalizeSentence(entry.sentence);
+  const sentence = collapseRepeatedSentenceFragments(entry.sentence);
   const example = normalizeSentence(entry.example);
   const chinese = repairChineseMeaning(vocabulary, entry.chinese);
 
@@ -1771,6 +1814,108 @@ async function callArkJson(params: {
   };
 }
 
+async function extractTextFromImageWithModel(params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  buffer: Buffer;
+  fileType: string;
+  coverageMode?: "default" | "exhaustive";
+}) {
+  const base64 = params.buffer.toString("base64");
+  const imageUrl = `data:${params.fileType || "image/png"};base64,${base64}`;
+  const content = await callArkContent({
+    apiKey: params.apiKey,
+    baseUrl: params.baseUrl,
+    model: params.model,
+    timeoutMs: 28000,
+    messages: [
+      {
+        role: "system",
+        content: "You are an OCR specialist extracting clean English article text from screenshots.",
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `
+Read the screenshot and return valid JSON only:
+{
+  "cleanedText": "string"
+}
+
+Rules:
+1. Extract all visible English article sentences in reading order.
+2. Keep every sentence complete. Do not skip the lower part of the image.
+3. Ignore browser chrome, timestamps, icons, logos, floating buttons, watermarks, and decorative UI.
+4. Merge wrapped lines back into full natural sentences.
+5. Do not summarize, translate, classify, or extract vocabulary here.
+6. Keep names, places, titles, and numbers exactly as shown when readable.
+7. If a line is unclear, infer only when the surrounding sentence makes it obvious; otherwise keep the readable text and continue.
+8. cleanedText should be the final merged article text in natural reading order.
+9. The screenshot may use a dark background with white English text. Read the article text itself, not the app UI.
+10. Return JSON only.
+11. Pay special attention to the ${params.coverageMode === "exhaustive" ? "full image from top to bottom" : "whole image"} so no sentence is omitted.
+            `.trim(),
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: imageUrl,
+            },
+          },
+        ],
+      },
+    ],
+  }).catch(() => "");
+
+  if (!content) {
+    return "";
+  }
+
+  try {
+    const payload = JSON.parse(extractJsonPayload(content)) as { cleanedText?: string };
+    return cleanTranscript(payload.cleanedText ?? "");
+  } catch {
+    const rawText = content
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .replace(/\}\s*$/g, "")
+      .trim()
+      .replace(/^"+|"+$/g, "");
+    return cleanTranscript(rawText);
+  }
+}
+
+async function extractTextFromImageWithAiFallback(params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  buffer: Buffer;
+  fileType: string;
+}) {
+  const primaryTranscript = await extractTextFromImageWithModel(params).catch(() => "");
+  const primarySentenceCount = splitTranscriptSentences(primaryTranscript).length;
+
+  if (!primaryTranscript) {
+    return "";
+  }
+
+  if (primarySentenceCount <= 2 || primaryTranscript.length < 360) {
+    const exhaustiveTranscript = await extractTextFromImageWithModel({
+      ...params,
+      coverageMode: "exhaustive",
+    }).catch(() => "");
+
+    if (exhaustiveTranscript) {
+      return mergeTranscriptVariants(primaryTranscript, exhaustiveTranscript);
+    }
+  }
+
+  return primaryTranscript;
+}
+
 async function analyzeImageWithModel(params: {
   apiKey: string;
   baseUrl: string;
@@ -1790,7 +1935,7 @@ async function analyzeImageWithModel(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: 18000,
+    timeoutMs: 16000,
     messages: [
       {
         role: "system",
@@ -1819,17 +1964,20 @@ Read the image and return valid JSON only:
 Rules:
 1. Keep only useful English learning content visible in the image.
 2. Ignore icons, logos, timestamps, decorative UI, page chrome, watermarks, and garbage fragments.
-3. sentence must be a complete meaningful original sentence from the image text.
-4. vocabulary must be one advanced word or phrase at or above high-school English level from that sentence.
-5. chinese must be concise Chinese meaning.
-6. example must be one new natural English example sentence.
-7. pronunciation must be a short TTS-friendly English text.
-8. Extract as many qualified words and phrases as possible across every sentence.
-9. Prefer 2 to 4 strong items from each information-rich sentence whenever they truly exist.
-10. Proper nouns and named entities are strongly encouraged when educationally meaningful: person names, place names, institutions, official titles, organizations, and geopolitical regions.
-11. If the image already looks like vocabulary cards or notes, preserve the visible meaning and examples accurately.
-12. If the user explicitly requests certain words or phrases, prioritize those requested items first.
-13. Return JSON only.
+3. cleanedText must restore all readable original English sentences from top to bottom, including the lower half of a long screenshot.
+4. sentence must be a complete meaningful original sentence from the image text.
+5. Do not drop the later sentences in a long image, and do not repeat sentence fragments.
+6. Every entry sentence must appear verbatim inside cleanedText.
+7. vocabulary must be one advanced word or phrase at or above high-school English level from that sentence.
+8. chinese must be concise Chinese meaning.
+9. example must be one new natural English example sentence.
+10. pronunciation must be a short TTS-friendly English text.
+11. Extract as many qualified words and phrases as possible across every sentence.
+12. Prefer 2 to 5 strong items from each information-rich sentence whenever they truly exist.
+13. Proper nouns and named entities are strongly encouraged when educationally meaningful: person names, place names, institutions, official titles, organizations, and geopolitical regions.
+14. If the image already looks like vocabulary cards or notes, preserve the visible meaning and examples accurately.
+15. If the user explicitly requests certain words or phrases, prioritize those requested items first.
+16. Return JSON only.
 
 User instructions:
 ${params.instructions || "请尽可能多提取每句话里高中及以上水平的高质量单词和短语，并包含专有名词、人名、地名、机构名、头衔等有学习价值的表达。"}
@@ -1873,7 +2021,7 @@ async function structureTranscript(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: 22000,
+    timeoutMs: 14000,
     messages: [
       {
         role: "system",
@@ -1926,6 +2074,64 @@ ${existingVocabulary || "none"}
       },
     ],
   });
+}
+
+async function enrichEntriesForImageTranscript(params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  transcript: string;
+  instructions?: string;
+  existingEntries?: RecognitionEntry[];
+  seedEntries?: StructuredEntry[];
+}) {
+  const transcript = cleanTranscript(params.transcript);
+  const desiredEntryCount = getDesiredEntryCount(transcript);
+  const sentenceCount = splitTranscriptSentences(transcript).length;
+  let entries = filterValidEntries(params.seedEntries ?? []);
+
+  if (!transcript) {
+    return entries;
+  }
+
+  const expectedCoverage = Math.min(Math.max(sentenceCount - 1, 1), 8);
+  const needsMoreEntries =
+    entries.length < Math.max(Math.ceil(desiredEntryCount * 0.6), 8) ||
+    countCoveredSentences(entries) < expectedCoverage;
+
+  if (needsMoreEntries) {
+    const structured = await structureTranscript({
+      apiKey: params.apiKey,
+      baseUrl: params.baseUrl,
+      model: params.model,
+      transcript,
+      instructions: params.instructions,
+      existingEntries: params.existingEntries,
+      appendOnly: Boolean(params.existingEntries?.length),
+    }).catch(() => ({ entries: [] as StructuredEntry[] }));
+
+    entries = filterValidEntries([...entries, ...(structured.entries ?? [])]);
+  }
+
+  const stillNeedsMoreEntries =
+    entries.length < Math.max(Math.ceil(desiredEntryCount * 0.75), 10) ||
+    countCoveredSentences(entries) < expectedCoverage;
+
+  if (stillNeedsMoreEntries) {
+    const supplementalEntries = await supplementEntriesFromTranscript({
+      apiKey: params.apiKey,
+      baseUrl: params.baseUrl,
+      model: params.model,
+      transcript,
+      existingEntries: params.existingEntries,
+      currentEntries: entries,
+      limit: Math.max(desiredEntryCount - entries.length, 10),
+    }).catch(() => [] as StructuredEntry[]);
+
+    entries = filterValidEntries([...entries, ...supplementalEntries]);
+  }
+
+  return entries.slice(0, Math.min(Math.max(desiredEntryCount, 18), 36));
 }
 
 async function generateEntriesForRequestedTermsDirect(params: {
@@ -2029,6 +2235,67 @@ async function analyzeImageFilesDirectly(params: {
   preferOcrFirst?: boolean;
   preferVision?: boolean;
 }) {
+  if (params.preferVision) {
+    const results = await Promise.all(
+      params.files.map(async (file) => {
+        const bytes = await file.arrayBuffer();
+        const buffer = Buffer.from(bytes);
+        const transcript = await extractTextFromImageWithAiFallback({
+          apiKey: params.apiKey,
+          baseUrl: params.baseUrl,
+          model: params.model,
+          buffer,
+          fileType: file.type,
+        }).catch(() => "");
+
+        if (transcript) {
+          const entries = filterValidEntries(createFallbackEntries(transcript));
+          return {
+            transcript,
+            entries,
+            method: "vision" as const,
+          };
+        }
+
+        return {
+          transcript: "",
+          entries: [],
+          method: "vision" as const,
+        };
+      }),
+    );
+
+    const validResults = results.filter((item) => item.transcript);
+
+    const mergedTranscript = cleanTranscript(
+      validResults.map((item) => item.transcript).join("\n\n"),
+    );
+    const seedEntries = mergedTranscript
+      ? filterValidEntries([
+          ...validResults.flatMap((item) => item.entries),
+          ...createFallbackEntries(mergedTranscript),
+        ])
+      : [];
+    const entries = mergedTranscript
+      ? await enrichEntriesForImageTranscript({
+          apiKey: params.apiKey,
+          baseUrl: params.baseUrl,
+          model: params.model,
+          transcript: mergedTranscript,
+          instructions: params.instructions,
+          existingEntries: params.existingEntries,
+          seedEntries,
+        })
+      : [];
+
+    return {
+      rawText: mergedTranscript,
+      cleanedText: mergedTranscript,
+      entries,
+      method: "vision" as const,
+    };
+  }
+
   if (params.preferOcrFirst) {
     const transcripts = await Promise.all(
       params.files.map(async (file) => {
@@ -2065,17 +2332,19 @@ async function analyzeImageFilesDirectly(params: {
         entries.length < desiredEntryCount ||
         coveredSentences < Math.min(Math.max(sentenceCount - 1, 1), 8)
       ) {
-        const supplementalEntries = await supplementEntriesFromTranscript({
-          apiKey: params.apiKey,
-          baseUrl: params.baseUrl,
-          model: params.model,
-          transcript: mergedTranscript,
-          existingEntries: params.existingEntries,
-          currentEntries: entries,
-          limit: Math.max(desiredEntryCount - entries.length, 10),
-        });
-        entries = filterValidEntries([...entries, ...supplementalEntries]);
+        const supplementalEntries = createFallbackEntries(mergedTranscript);
+        entries = filterValidEntries([...entries, ...supplementalEntries]).slice(
+          0,
+          desiredEntryCount,
+        );
       }
+    }
+
+    if (entries.length === 0 && mergedTranscript) {
+      entries = filterValidEntries(createFallbackEntries(mergedTranscript)).slice(
+        0,
+        getDesiredEntryCount(mergedTranscript),
+      );
     }
 
     return {
@@ -2235,8 +2504,8 @@ export async function POST(request: Request) {
   const baseUrl = normalizeBaseUrlOverride(requestedBaseUrl, baseUrlFromEnv);
   const selectedModelOption =
     normalizeModelOverride(requestedModel) ??
-    normalizeModelOverride(modelFromEnv) ??
-    getArkModelOption(DEFAULT_ARK_MODEL);
+    getArkModelOption(DEFAULT_ARK_MODEL) ??
+    normalizeModelOverride(modelFromEnv);
 
   if (!selectedModelOption) {
     return NextResponse.json(
@@ -2249,9 +2518,10 @@ export async function POST(request: Request) {
 
   const selectedModel = selectedModelOption.value;
   const apiModel = selectedModelOption.apiModel;
+  const visionModelOption = getArkModelOption("doubao-seed-2-0-pro") ?? selectedModelOption;
+  const visionModel = visionModelOption.apiModel;
 
   try {
-    const visionModel = apiModel;
     let transcript = "";
     let fileName =
       sourceFileName ||
@@ -2260,6 +2530,7 @@ export async function POST(request: Request) {
     let cleanedText = "";
     let entries: StructuredEntry[] = [];
     let mode: "vision" | "vision-fallback" = "vision";
+    let effectiveModelOptionForResponse = selectedModelOption;
 
     if (directTermMode && requestedTerms.length > 0) {
       const directEntries = await generateEntriesForRequestedTermsDirect({
@@ -2274,6 +2545,7 @@ export async function POST(request: Request) {
       transcript = cleanedText;
       mode = "vision-fallback";
     } else if (files.length > 0) {
+      effectiveModelOptionForResponse = visionModelOption;
       const analysis = await analyzeImageFilesDirectly({
         apiKey,
         baseUrl,
@@ -2285,8 +2557,8 @@ export async function POST(request: Request) {
         preferVision,
       });
       transcript = analysis.rawText;
-      cleanedText = analysis.cleanedText;
-      entries = analysis.entries;
+      cleanedText = analysis.rawText;
+      entries = filterValidEntries(analysis.entries);
       ocrMethod = analysis.method;
       fileName =
         files.length === 1
@@ -2413,7 +2685,7 @@ export async function POST(request: Request) {
       mode = "vision-fallback";
     }
 
-    if (entries.length > 0 && !ocrFirst && !localHeuristic) {
+    if (entries.length > 0 && files.length === 0 && !ocrFirst && !localHeuristic) {
       entries = await ensureHighQualityEntries({
         apiKey,
         baseUrl,
@@ -2440,9 +2712,9 @@ export async function POST(request: Request) {
       cleanedText: cleanedText || rawText,
       entries: normalizeEntries(entries),
       mode,
-      effectiveModel: selectedModel,
-      effectiveVisionModel: selectedModel,
-      resolvedModelId: apiModel,
+      effectiveModel: effectiveModelOptionForResponse.value,
+      effectiveVisionModel: visionModelOption.value,
+      resolvedModelId: effectiveModelOptionForResponse.apiModel,
       resolvedVisionModelId: visionModel,
       ocrMethod,
       feishuLink,
@@ -2458,10 +2730,10 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error: normalizedMessage,
-        effectiveModel: selectedModel,
-        effectiveVisionModel: selectedModel,
-        resolvedModelId: apiModel,
-        resolvedVisionModelId: apiModel,
+        effectiveModel: files.length > 0 ? visionModelOption.value : selectedModel,
+        effectiveVisionModel: visionModelOption.value,
+        resolvedModelId: files.length > 0 ? visionModel : apiModel,
+        resolvedVisionModelId: visionModel,
       },
       { status: 500 },
     );

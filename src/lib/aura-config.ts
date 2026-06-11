@@ -45,7 +45,7 @@ export function getArkModelOption(value?: string | null) {
 }
 
 export const DEFAULT_ARK_MODEL =
-  getArkModelOption(process.env.NEXT_PUBLIC_ARK_MODEL)?.value ?? "doubao-seed-2-0-code";
+  getArkModelOption(process.env.NEXT_PUBLIC_ARK_MODEL)?.value ?? "doubao-seed-2-0-pro";
 
 export function isSupportedArkModel(value: string) {
   return getArkModelOption(value) !== null;
