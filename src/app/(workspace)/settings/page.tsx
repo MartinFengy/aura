@@ -84,7 +84,14 @@ export default function SettingsPage() {
                 <span className="mb-2 block text-sm text-stone-600">模型名称</span>
                 <select
                   value={config.arkModel}
-                  onChange={(event) => setArkModel(event.target.value)}
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+                    const nextModel = getArkModelOption(nextValue);
+                    setArkModel(nextValue);
+                    if (nextModel?.defaultBaseUrl) {
+                      setArkBaseUrl(nextModel.defaultBaseUrl);
+                    }
+                  }}
                   className="w-full rounded-[22px] border border-white/70 bg-white/85 px-4 py-3 text-sm text-stone-700 outline-none"
                 >
                   {ARK_MODEL_OPTIONS.map((model) => (
@@ -137,10 +144,10 @@ export default function SettingsPage() {
             <div className="mt-5 space-y-3">
               {[
                 { label: "飞书同步目标", value: config.feishuLink },
-                { label: "Doubao 模型", value: config.arkModel },
+                { label: "当前模型", value: config.arkModel },
                 { label: "在线推理 Model ID", value: selectedModel?.apiModel ?? "未识别" },
                 { label: "模型服务地址", value: config.arkBaseUrl },
-                { label: "Ark Key 设置", value: "请写入 .env.local 并重启服务" },
+                { label: "API Key 设置", value: "请写入 .env.local 并重启服务" },
                 { label: "默认飞书回退", value: DEFAULT_FEISHU_LINK },
               ].map((item) => (
                 <div

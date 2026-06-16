@@ -5,6 +5,11 @@ export type RecognitionEntry = {
   chinese: string;
   example: string;
   pronunciation: string;
+  partOfSpeech?: string;
+  sentenceChinese?: string;
+  exampleChinese?: string;
+  difficulty?: string;
+  category?: "learning" | "proper-noun";
 };
 
 export type RecognitionTask = {
@@ -15,6 +20,7 @@ export type RecognitionTask = {
   rawText?: string;
   feishuLink?: string;
   entries: RecognitionEntry[];
+  properNouns?: RecognitionEntry[];
 };
 
 export type DictationResult = "认识" | "模糊" | "不认识";
@@ -100,6 +106,7 @@ export const initialRecognitionTasks: RecognitionTask[] = [
     name: "经济学人截图精读",
     source: "Economist Screenshot",
     createdAt: "2026-05-21 09:20",
+    properNouns: [],
     entries: [
       {
         id: "entry-1",
@@ -108,6 +115,11 @@ export const initialRecognitionTasks: RecognitionTask[] = [
         chinese: "有韧性的复苏",
         example: "The local market showed a resilient recovery after the holiday slump.",
         pronunciation: "resilient recovery",
+        partOfSpeech: "noun phrase",
+        sentenceChinese: "这项政策转变在制造业带来了具有韧性的复苏。",
+        exampleChinese: "假期后的低迷过后，本地市场出现了有韧性的复苏。",
+        difficulty: "B2",
+        category: "learning",
       },
       {
         id: "entry-2",
@@ -116,6 +128,11 @@ export const initialRecognitionTasks: RecognitionTask[] = [
         chinese: "清晰表达",
         example: "She articulated the new pricing strategy in a concise way.",
         pronunciation: "articulate",
+        partOfSpeech: "verb",
+        sentenceChinese: "高管必须在投资者失去耐心之前清晰说明长期价值。",
+        exampleChinese: "她用简洁的方式清晰说明了新的定价策略。",
+        difficulty: "B2",
+        category: "learning",
       },
       {
         id: "entry-3",
@@ -124,6 +141,11 @@ export const initialRecognitionTasks: RecognitionTask[] = [
         chinese: "渐进式改进",
         example: "Incremental improvements helped the team build trust week by week.",
         pronunciation: "incremental improvements",
+        partOfSpeech: "noun phrase",
+        sentenceChinese: "渐进式改进往往胜过剧烈但不稳定的改革。",
+        exampleChinese: "渐进式改进帮助团队一周一周地建立了信任。",
+        difficulty: "B2",
+        category: "learning",
       },
     ],
   },
@@ -132,6 +154,7 @@ export const initialRecognitionTasks: RecognitionTask[] = [
     name: "雅思写作高频表达",
     source: "IELTS Writing Notes",
     createdAt: "2026-05-20 20:10",
+    properNouns: [],
     entries: [
       {
         id: "entry-4",
@@ -140,6 +163,11 @@ export const initialRecognitionTasks: RecognitionTask[] = [
         chinese: "被广泛认可",
         example: "It is widely acknowledged that habits shape long-term outcomes.",
         pronunciation: "widely acknowledged",
+        partOfSpeech: "adjective phrase",
+        sentenceChinese: "公共交通可以缓解城市拥堵，这一点被广泛认可。",
+        exampleChinese: "习惯会塑造长期结果，这一点被广泛认可。",
+        difficulty: "B2",
+        category: "learning",
       },
       {
         id: "entry-5",
@@ -148,6 +176,11 @@ export const initialRecognitionTasks: RecognitionTask[] = [
         chinese: "尤为明显",
         example: "The change was particularly evident in the final quarter.",
         pronunciation: "particularly evident",
+        partOfSpeech: "adjective phrase",
+        sentenceChinese: "这一趋势在年轻职场人群中尤为明显。",
+        exampleChinese: "这种变化在最后一个季度尤为明显。",
+        difficulty: "B2",
+        category: "learning",
       },
     ],
   },
@@ -156,6 +189,7 @@ export const initialRecognitionTasks: RecognitionTask[] = [
     name: "TED 演讲 OCR 词汇整理",
     source: "TED Transcript",
     createdAt: "2026-05-19 18:42",
+    properNouns: [],
     entries: [
       {
         id: "entry-6",
@@ -164,6 +198,11 @@ export const initialRecognitionTasks: RecognitionTask[] = [
         chinese: "维持，支撑",
         example: "Daily review can sustain your progress over a long period.",
         pronunciation: "sustain",
+        partOfSpeech: "verb",
+        sentenceChinese: "好奇心是支撑有意义科学探索的引擎。",
+        exampleChinese: "每天复习可以在很长一段时间内维持你的进步。",
+        difficulty: "B2",
+        category: "learning",
       },
       {
         id: "entry-7",
@@ -172,6 +211,11 @@ export const initialRecognitionTasks: RecognitionTask[] = [
         chinese: "连贯的叙述",
         example: "Her presentation used a coherent narrative from start to finish.",
         pronunciation: "coherent narrative",
+        partOfSpeech: "noun phrase",
+        sentenceChinese: "连贯的叙述能让观点比孤立的事实传播得更远。",
+        exampleChinese: "她的演讲从头到尾都采用了连贯的叙述。",
+        difficulty: "B2",
+        category: "learning",
       },
     ],
   },
@@ -193,6 +237,7 @@ export function createTaskFromUpload(fileName: string): RecognitionTask {
     source: fileName,
     createdAt,
     rawText: "",
+    properNouns: [],
     entries: [
       {
         id: `entry-${Date.now()}-1`,
@@ -201,6 +246,11 @@ export function createTaskFromUpload(fileName: string): RecognitionTask {
         chinese: "值得反复复习",
         example: "These expressions are worth reviewing before the next test.",
         pronunciation: "worth reviewing",
+        partOfSpeech: "adjective phrase",
+        sentenceChinese: `上传的材料 ${slug} 包含值得反复复习的高级表达。`,
+        exampleChinese: "这些表达在下一次测试前值得复习。",
+        difficulty: "B2",
+        category: "learning",
       },
       {
         id: `entry-${Date.now()}-2`,
@@ -209,6 +259,11 @@ export function createTaskFromUpload(fileName: string): RecognitionTask {
         chinese: "渐进式学习档案",
         example: "An incremental learning archive keeps your notes searchable.",
         pronunciation: "incremental learning archive",
+        partOfSpeech: "noun phrase",
+        sentenceChinese: "Aura 可以把提取出的词汇整理成渐进式学习档案。",
+        exampleChinese: "渐进式学习档案能让你的笔记保持可搜索。",
+        difficulty: "B2",
+        category: "learning",
       },
       {
         id: `entry-${Date.now()}-3`,
@@ -217,6 +272,11 @@ export function createTaskFromUpload(fileName: string): RecognitionTask {
         chinese: "听写练习",
         example: "We turned the article into a dictation practice set for tomorrow.",
         pronunciation: "dictation practice",
+        partOfSpeech: "noun phrase",
+        sentenceChinese: "每个识别任务都应该保留原句，以便后续进行听写练习。",
+        exampleChinese: "我们把这篇文章整理成了明天要用的听写练习。",
+        difficulty: "B1",
+        category: "learning",
       },
     ],
   };
@@ -226,6 +286,7 @@ export function createTaskFromAnalysis(params: {
   fileName: string;
   rawText: string;
   entries: RecognitionEntry[];
+  properNouns?: RecognitionEntry[];
   feishuLink?: string;
 }) {
   const slug = params.fileName.replace(/\.[^.]+$/, "") || "新识别任务";
@@ -245,5 +306,6 @@ export function createTaskFromAnalysis(params: {
     rawText: params.rawText,
     feishuLink: params.feishuLink,
     entries: params.entries,
+    properNouns: params.properNouns ?? [],
   } satisfies RecognitionTask;
 }

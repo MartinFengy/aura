@@ -52,11 +52,13 @@ type LearningTasksContextValue = {
     taskId: string;
     rawText?: string;
     entries: RecognitionTask["entries"];
+    properNouns?: RecognitionTask["properNouns"];
   }) => void;
   appendAnalysisToTask: (params: {
     taskId: string;
     rawText?: string;
     entries: RecognitionTask["entries"];
+    properNouns?: RecognitionTask["properNouns"];
     feishuLink?: string;
   }) => void;
   renameTask: (taskId: string, name: string) => void;
@@ -152,10 +154,10 @@ function sameTaskShape(left: RecognitionTask[], right: RecognitionTask[]) {
   }
 
   const leftKeys = left
-    .map((task) => `${task.id}:${task.entries.length}:${task.name}`)
+    .map((task) => `${task.id}:${task.entries.length}:${task.properNouns?.length ?? 0}:${task.name}`)
     .sort();
   const rightKeys = right
-    .map((task) => `${task.id}:${task.entries.length}:${task.name}`)
+    .map((task) => `${task.id}:${task.entries.length}:${task.properNouns?.length ?? 0}:${task.name}`)
     .sort();
 
   return leftKeys.every((key, index) => key === rightKeys[index]);
@@ -468,6 +470,7 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
     taskId: string;
     rawText?: string;
     entries: RecognitionTask["entries"];
+    properNouns?: RecognitionTask["properNouns"];
     feishuLink?: string;
   }) {
     let nextTask: null | RecognitionTask = null;
@@ -486,12 +489,22 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
             (entry) => !existingKeys.has(`${entry.sentence}__${entry.vocabulary}`),
           ),
         ];
+        const existingProperNounKeys = new Set(
+          (task.properNouns ?? []).map((entry) => `${entry.sentence}__${entry.vocabulary}`),
+        );
+        const mergedProperNouns = [
+          ...(task.properNouns ?? []),
+          ...((params.properNouns ?? []).filter(
+            (entry) => !existingProperNounKeys.has(`${entry.sentence}__${entry.vocabulary}`),
+          ) as RecognitionTask["entries"]),
+        ];
 
         nextTask = sanitizeRecognitionTaskEntries({
           ...task,
           rawText: [task.rawText, params.rawText].filter(Boolean).join("\n\n"),
           feishuLink: params.feishuLink ?? task.feishuLink,
           entries: mergedEntries,
+          properNouns: mergedProperNouns,
         });
         return nextTask;
       }),
@@ -509,6 +522,7 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
     taskId: string;
     rawText?: string;
     entries: RecognitionTask["entries"];
+    properNouns?: RecognitionTask["properNouns"];
   }) {
     let nextTask: null | RecognitionTask = null;
     setTasks((current) =>
@@ -518,6 +532,7 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
               ...task,
               rawText: params.rawText ?? task.rawText,
               entries: params.entries,
+              properNouns: params.properNouns ?? task.properNouns ?? [],
             }))
           : task,
       ),

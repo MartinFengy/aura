@@ -8,6 +8,8 @@ export const ARK_MODEL_OPTIONS = [
     label: "Doubao-Seed-2.0-pro",
     value: "doubao-seed-2-0-pro",
     apiModel: "doubao-seed-2-0-pro-260215",
+    provider: "ark",
+    defaultBaseUrl: "https://ark.cn-beijing.volces.com/api/v3",
     detailUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/model/detail?Id=doubao-seed-2-0-pro",
   },
@@ -15,6 +17,8 @@ export const ARK_MODEL_OPTIONS = [
     label: "Doubao-Seed-2.0-lite",
     value: "doubao-seed-2-0-lite",
     apiModel: "doubao-seed-2-0-lite-260215",
+    provider: "ark",
+    defaultBaseUrl: "https://ark.cn-beijing.volces.com/api/v3",
     detailUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/model/detail?Id=doubao-seed-2-0-lite",
   },
@@ -22,6 +26,8 @@ export const ARK_MODEL_OPTIONS = [
     label: "Doubao-Seed-2.0-mini",
     value: "doubao-seed-2-0-mini",
     apiModel: "doubao-seed-2-0-mini-260215",
+    provider: "ark",
+    defaultBaseUrl: "https://ark.cn-beijing.volces.com/api/v3",
     detailUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/model/detail?Id=doubao-seed-2-0-mini",
   },
@@ -29,8 +35,18 @@ export const ARK_MODEL_OPTIONS = [
     label: "Doubao-Seed-2.0-Code",
     value: "doubao-seed-2-0-code",
     apiModel: "doubao-seed-2-0-code-preview-260215",
+    provider: "ark",
+    defaultBaseUrl: "https://ark.cn-beijing.volces.com/api/v3",
     detailUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/model/detail?Id=doubao-seed-2-0-code",
+  },
+  {
+    label: "Agnes-2.0-Flash",
+    value: "agnes-2.0-flash",
+    apiModel: "agnes-2.0-flash",
+    provider: "agnes",
+    defaultBaseUrl: "https://apihub.agnes-ai.com/v1",
+    detailUrl: "https://agnes-ai.com/doc/quick-start",
   },
 ] as const;
 
@@ -63,6 +79,9 @@ export type AuraConfig = {
 
 export const defaultAuraConfig: AuraConfig = {
   feishuLink: DEFAULT_FEISHU_LINK,
-  arkBaseUrl: process.env.NEXT_PUBLIC_ARK_BASE_URL ?? "https://ark.cn-beijing.volces.com/api/v3",
+  arkBaseUrl:
+    process.env.NEXT_PUBLIC_ARK_BASE_URL ??
+    getArkModelOption(process.env.NEXT_PUBLIC_ARK_MODEL)?.defaultBaseUrl ??
+    "https://ark.cn-beijing.volces.com/api/v3",
   arkModel: normalizeArkModel(process.env.NEXT_PUBLIC_ARK_MODEL),
 };

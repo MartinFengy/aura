@@ -346,15 +346,18 @@ export function LearningWorkspace() {
         nextImage.src = imageUrl;
       });
 
-      const maxWidth = 1600;
-      const maxHeight = 2400;
+      const maxWidth = 2200;
+      const maxHeight = 4200;
       const widthScale = image.width > maxWidth ? maxWidth / image.width : 1;
       const heightScale = image.height > maxHeight ? maxHeight / image.height : 1;
       const scale = Math.min(widthScale, heightScale, 1);
-      const shouldReencode =
-        file.type !== "image/jpeg" || file.size > 450 * 1024 || image.height > 1200;
+      const shouldResize = scale < 0.999;
+      const shouldReencodeJpeg =
+        file.type === "image/jpeg" && (file.size > 2.2 * 1024 * 1024 || image.height > 2800);
+      const shouldReencodePng =
+        file.type === "image/png" && file.size > 8 * 1024 * 1024;
 
-      if (scale >= 0.999 && !shouldReencode) {
+      if (!shouldResize && !shouldReencodeJpeg && !shouldReencodePng) {
         return file;
       }
       const canvas = document.createElement("canvas");
@@ -368,17 +371,56 @@ export function LearningWorkspace() {
 
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
+      const targetMimeType = file.type === "image/png" ? "image/png" : "image/jpeg";
       const blob = await new Promise<Blob | null>((resolve) => {
-        canvas.toBlob(resolve, "image/jpeg", 0.86);
+        if (targetMimeType === "image/png") {
+          canvas.toBlob(resolve, targetMimeType);
+          return;
+        }
+
+        canvas.toBlob(resolve, targetMimeType, 0.92);
       });
 
       if (!blob) {
         return file;
       }
 
-      return new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), {
-        type: "image/jpeg",
+      const nextExtension = targetMimeType === "image/png" ? ".png" : ".jpg";
+      return new File([blob], file.name.replace(/\.[^.]+$/, nextExtension), {
+        type: targetMimeType,
       });
+    } finally {
+      URL.revokeObjectURL(imageUrl);
+    }
+  }
+
+  async function inspectImageFile(file: File) {
+    if (!file.type.startsWith("image/") || file.type === "image/svg+xml") {
+      return {
+        fileName: file.name,
+        mimeType: file.type,
+        width: 0,
+        height: 0,
+        uploadSize: file.size,
+      };
+    }
+
+    const imageUrl = URL.createObjectURL(file);
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const nextImage = new Image();
+        nextImage.onload = () => resolve(nextImage);
+        nextImage.onerror = () => reject(new Error("图片读取失败"));
+        nextImage.src = imageUrl;
+      });
+
+      return {
+        fileName: file.name,
+        mimeType: file.type,
+        width: image.width,
+        height: image.height,
+        uploadSize: file.size,
+      };
     } finally {
       URL.revokeObjectURL(imageUrl);
     }
@@ -386,19 +428,38 @@ export function LearningWorkspace() {
 
   type PreparedUploadImage = {
     files: File[];
-    preferVisionOcr: boolean;
+    useOcrFirst: boolean;
+    metadata: {
+      fileName: string;
+      mimeType: string;
+      width: number;
+      height: number;
+      originalSize: number;
+      uploadSize: number;
+    };
   };
 
   async function prepareImageForUpload(file: File): Promise<PreparedUploadImage> {
+    const metadata = await inspectImageFile(file);
     if (!file.type.startsWith("image/") || file.type === "image/svg+xml") {
       return {
         files: [file],
-        preferVisionOcr: false,
+        useOcrFirst: false,
+        metadata: {
+          ...metadata,
+          originalSize: file.size,
+          uploadSize: file.size,
+        },
       };
     }
     return {
       files: [file],
-      preferVisionOcr: true,
+      useOcrFirst: true,
+      metadata: {
+        ...metadata,
+        originalSize: file.size,
+        uploadSize: file.size,
+      },
     };
   }
 
@@ -462,7 +523,10 @@ export function LearningWorkspace() {
         optimizedFiles.map((file) => prepareImageForUpload(file)),
       );
       const filesToUpload = optimizedFiles;
-      const shouldPreferVisionOcr = preparedImages.some((item) => item.preferVisionOcr);
+      const imageMetadata = preparedImages.map((item, index) => ({
+        ...item.metadata,
+        originalSize: queuedFiles[index]?.size ?? item.metadata.originalSize,
+      }));
       const formData = new FormData();
       let effectiveInstructions = draft;
       let effectiveRawText = "";
@@ -471,11 +535,6 @@ export function LearningWorkspace() {
       let targetExistingEntries: RecognitionTask["entries"] = [];
       let appendRequestedTerms: string[] = [];
       let directTermMode = false;
-
-      if (shouldPreferVisionOcr) {
-        formData.append("preferVision", "1");
-        setStatusMessage("正在将整张图片直接交给 AI 识别全文并统一抽词，请稍候...");
-      }
 
       filesToUpload.forEach((file) => {
         formData.append("files", file);
@@ -542,6 +601,7 @@ export function LearningWorkspace() {
       formData.append("existingEntries", JSON.stringify(targetExistingEntries));
       formData.append("requestedTerms", JSON.stringify(appendRequestedTerms));
       formData.append("directTermMode", directTermMode ? "1" : "0");
+      formData.append("imageMetadata", JSON.stringify(imageMetadata));
 
       const response = await fetch("/api/analyze", {
         method: "POST",
@@ -558,7 +618,7 @@ export function LearningWorkspace() {
         effectiveVisionModel?: string;
         resolvedModelId?: string;
         resolvedVisionModelId?: string;
-        ocrMethod?: "vision" | "tesseract";
+        ocrMethod?: "vision" | "tesseract" | "hybrid";
         feishuLink?: string;
         entries?: Array<{
           id: string;
@@ -567,7 +627,34 @@ export function LearningWorkspace() {
           chinese: string;
           example: string;
           pronunciation: string;
+          partOfSpeech?: string;
+          sentenceChinese?: string;
+          exampleChinese?: string;
+          difficulty?: string;
+          category?: "learning" | "proper-noun";
         }>;
+        properNouns?: Array<{
+          id: string;
+          sentence: string;
+          vocabulary: string;
+          chinese: string;
+          example: string;
+          pronunciation: string;
+          partOfSpeech?: string;
+          sentenceChinese?: string;
+          exampleChinese?: string;
+          difficulty?: string;
+          category?: "learning" | "proper-noun";
+        }>;
+        diagnostics?: {
+          imageCount?: number;
+          ocrTextLength?: number;
+          ocrTextLines?: number;
+          aiInputLength?: number;
+          aiOutputCount?: number;
+          finalDisplayCount?: number;
+          method?: "vision" | "tesseract" | "hybrid";
+        };
         fileName?: string;
         error?: string;
       };
@@ -600,6 +687,10 @@ export function LearningWorkspace() {
         );
       }
 
+      if (payload.diagnostics) {
+        console.info("[Aura analyze diagnostics]", payload.diagnostics);
+      }
+
       if (!response.ok || payload.error) {
         const errorMessage = payload.error || "分析失败";
         const modelHint =
@@ -617,6 +708,7 @@ export function LearningWorkspace() {
         queuedFiles.length === 0 && selectedAction === "文字追加" && !directTermMode
           ? filterEntriesForRequestedTerms(payload.entries ?? [], appendRequestedTerms)
           : (payload.entries ?? []);
+      const resolvedProperNouns = payload.properNouns ?? [];
 
       if (
         queuedFiles.length === 0 &&
@@ -635,6 +727,7 @@ export function LearningWorkspace() {
             "新识别任务",
           rawText: payload.rawText ?? payload.cleanedText ?? "",
           entries: resolvedEntries,
+          properNouns: resolvedProperNouns,
           feishuLink: payload.feishuLink ?? config.feishuLink,
         });
 
@@ -644,19 +737,26 @@ export function LearningWorkspace() {
           taskId: targetTaskId,
           rawText: payload.rawText ?? payload.cleanedText,
           entries: resolvedEntries,
+          properNouns: resolvedProperNouns,
           feishuLink: payload.feishuLink ?? config.feishuLink,
         });
       }
 
       setQueuedFiles([]);
       setStatusMessage(
-        `分析完成，已生成 ${resolvedEntries.length} 条结果${
+        `分析完成，已生成 ${resolvedEntries.length} 条学习词汇、${resolvedProperNouns.length} 条专有名词${
           targetTaskName ? `，已追加到「${targetTaskName}」` : ""
         }。文本模型：${payload.effectiveModel ?? config.arkModel}${
           payload.resolvedModelId ? ` / ${payload.resolvedModelId}` : ""
         }；图片识别：${payload.effectiveVisionModel ?? config.arkModel}${
           payload.resolvedVisionModelId ? ` / ${payload.resolvedVisionModelId}` : ""
-        }${payload.ocrMethod === "tesseract" ? "（已自动切换到本地 OCR 兜底）" : ""}。`,
+        }${
+          payload.ocrMethod === "hybrid"
+            ? "（已使用 OCR + AI 混合补全）"
+            : payload.ocrMethod === "tesseract"
+              ? "（已优先使用本地 OCR）"
+              : ""
+        }。`,
       );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "分析失败，请稍后再试。";

@@ -37,10 +37,16 @@ function readStoredConfig() {
     }
 
     const parsed = JSON.parse(stored) as Partial<AuraConfig>;
+    const shouldForceEnvModel = defaultAuraConfig.arkModel === "agnes-2.0-flash";
     return {
       ...defaultAuraConfig,
       ...parsed,
-      arkModel: normalizeArkModel(parsed.arkModel),
+      arkModel: shouldForceEnvModel
+        ? defaultAuraConfig.arkModel
+        : normalizeArkModel(parsed.arkModel),
+      arkBaseUrl: shouldForceEnvModel
+        ? defaultAuraConfig.arkBaseUrl
+        : parsed.arkBaseUrl || defaultAuraConfig.arkBaseUrl,
     };
   } catch {
     return defaultAuraConfig;

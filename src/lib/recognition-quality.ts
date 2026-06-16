@@ -4,6 +4,11 @@ type EntryLike = {
   chinese: string;
   example: string;
   pronunciation?: string;
+  partOfSpeech?: string;
+  sentenceChinese?: string;
+  exampleChinese?: string;
+  difficulty?: string;
+  category?: "learning" | "proper-noun";
 };
 
 const LOW_QUALITY_CHINESE_PATTERNS = [
@@ -178,6 +183,10 @@ export function sanitizeRecognitionEntry<T extends EntryLike>(entry: T): T {
   const chinese = normalizeSentence(entry.chinese);
   const example = normalizeSentence(entry.example);
   const pronunciation = normalizeSentence(entry.pronunciation ?? "");
+  const partOfSpeech = normalizeSentence(entry.partOfSpeech ?? "");
+  const sentenceChinese = normalizeSentence(entry.sentenceChinese ?? "");
+  const exampleChinese = normalizeSentence(entry.exampleChinese ?? "");
+  const difficulty = normalizeSentence(entry.difficulty ?? "");
 
   return {
     ...entry,
@@ -186,6 +195,10 @@ export function sanitizeRecognitionEntry<T extends EntryLike>(entry: T): T {
     chinese,
     example,
     pronunciation,
+    partOfSpeech,
+    sentenceChinese,
+    exampleChinese,
+    difficulty,
   };
 }
 
@@ -199,11 +212,12 @@ export function getRecognitionEntryQuality<T extends EntryLike>(entry: T) {
 }
 
 export function sanitizeRecognitionTaskEntries<
-  TTask extends { entries: TEntry[] },
+  TTask extends { entries: TEntry[]; properNouns?: TEntry[] },
   TEntry extends EntryLike,
 >(task: TTask): TTask {
   return {
     ...task,
     entries: task.entries.map((entry) => sanitizeRecognitionEntry(entry)),
+    properNouns: (task.properNouns ?? []).map((entry) => sanitizeRecognitionEntry(entry)),
   };
 }
