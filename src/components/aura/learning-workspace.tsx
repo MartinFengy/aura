@@ -32,6 +32,9 @@ const quickActions = [
   { label: "上传图片/文件", icon: ImagePlus },
 ];
 
+const defaultAnalysisPrompt =
+  "你现在是一位经验丰富、讲解细致的英文老师。请按照课堂讲解的标准，逐句深入分析原文，从每句话中尽可能多提取中国高中英语水平以上的高质量单词、固定搭配、短语动词、名词短语、新闻常用表达，以及值得了解的人名、地名、机构名、头衔和其他专有名词。不要只给每个长句提取 1 个词，要尽量分块提取有学习价值的表达；同时舍弃 I、we、is、are、often、very 这类过于基础或学习价值低的词。每个词条都要给出准确中文意思、原句翻译、自然例句、例句翻译和发音。";
+
 function splitTranscriptSentences(transcript: string) {
   const protectedText = transcript.replace(
     /\b(?:[A-Z]\.){2,}/g,
@@ -81,7 +84,7 @@ function buildSearchVariants(term: string) {
 
 function splitRequestedItems(text: string) {
   return text
-    .split(/[\n,，；;、]+|\s+(?:and|or)\s+/i)
+    .split(/[\n,，；;、]+/)
     .map((item) => item.trim())
     .filter(Boolean);
 }
@@ -235,6 +238,57 @@ function collectTaskSentences(task: Pick<RecognitionTask, "rawText" | "entries">
   );
 }
 
+function stopTaskActionEvent(event: {
+  preventDefault: () => void;
+  stopPropagation: () => void;
+}) {
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function mergeAppendEntries(
+  entries: Array<{
+    id: string;
+    sentence: string;
+    vocabulary: string;
+    chinese: string;
+    example: string;
+    pronunciation: string;
+    partOfSpeech?: string;
+    sentenceChinese?: string;
+    exampleChinese?: string;
+    difficulty?: string;
+  }>,
+  properNouns: Array<{
+    id: string;
+    sentence: string;
+    vocabulary: string;
+    chinese: string;
+    example: string;
+    pronunciation: string;
+    partOfSpeech?: string;
+    sentenceChinese?: string;
+    exampleChinese?: string;
+    difficulty?: string;
+  }>,
+) {
+  const merged = [...entries];
+  const seen = new Set(
+    entries.map((entry) => `${normalizeSearchText(entry.sentence)}__${normalizeSearchText(entry.vocabulary)}`),
+  );
+
+  for (const entry of properNouns) {
+    const key = `${normalizeSearchText(entry.sentence)}__${normalizeSearchText(entry.vocabulary)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(entry);
+  }
+
+  return merged;
+}
+
 function findAppendTarget(params: {
   tasks: RecognitionTask[];
   selectedTaskId?: string;
@@ -311,9 +365,8 @@ export function LearningWorkspace() {
   } = useLearningTasks();
   const { config, setFeishuLink, resetFeishuLink } = useAuraConfig();
   const [selectedAction, setSelectedAction] = useState(quickActions[0].label);
-  const [draft, setDraft] = useState(
-    "请仔细阅读原文，对每句话尽可能提取更多高质量、超过高中英语水平的单词和短语，也可以提取有学习价值的人名、地名、机构名、头衔和其他专有名词，并给出中文意思、例句和发音。",
-  );
+  const [draft, setDraft] = useState(defaultAnalysisPrompt);
+  const [savedAnalysisPrompt, setSavedAnalysisPrompt] = useState(defaultAnalysisPrompt);
   const [queuedFiles, setQueuedFiles] = useState<File[]>([]);
   const [statusMessage, setStatusMessage] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -574,6 +627,13 @@ export function LearningWorkspace() {
             setStatusMessage(
               "没有在本地任务里精确定位到原句，已改为基于你输入的原句提示直接补充提取。",
             );
+          } else if (selectedTask?.rawText?.trim()) {
+            targetTaskId = selectedTask.id;
+            targetTaskName = selectedTask.name;
+            targetExistingEntries = selectedTask.entries ?? [];
+            effectiveRawText = selectedTask.rawText;
+            effectiveInstructions = `你现在是一位非常认真、非常有耐心的英文老师。请在我提供的原文里逐句搜索这些指定词汇或短语：${requestedTerms.join("、")}。必须优先在原文中定位它们真实出现的位置，并直接使用原文里的完整句子。不要自行新造原句，不要把一个词拆成多个更小的片段，也不要扩展到未指定的其他词。若这些表达在原文中真实存在，就把它们逐条输出；若某个表达不存在，就忽略它。`;
+            setStatusMessage("没有精确命中局部句子，已改为在当前任务全文中搜索这些指定表达。");
           } else {
             directTermMode = true;
             targetTaskId = undefined;
@@ -708,13 +768,22 @@ export function LearningWorkspace() {
         queuedFiles.length === 0 && selectedAction === "文字追加" && !directTermMode
           ? filterEntriesForRequestedTerms(payload.entries ?? [], appendRequestedTerms)
           : (payload.entries ?? []);
-      const resolvedProperNouns = payload.properNouns ?? [];
+      const resolvedProperNouns =
+        queuedFiles.length === 0 && selectedAction === "文字追加" && !directTermMode
+          ? filterEntriesForRequestedTerms(payload.properNouns ?? [], appendRequestedTerms)
+          : (payload.properNouns ?? []);
+      const finalResolvedEntries = resolvedEntries;
+      const finalResolvedProperNouns = resolvedProperNouns;
+      const combinedResolvedEntries = mergeAppendEntries(
+        finalResolvedEntries,
+        finalResolvedProperNouns,
+      );
 
       if (
         queuedFiles.length === 0 &&
         selectedAction === "文字追加" &&
         appendRequestedTerms.length > 0 &&
-        resolvedEntries.length === 0
+        combinedResolvedEntries.length === 0
       ) {
         throw new Error("没有为你指定的词或短语生成可追加结果，请换一个表达后再试。");
       }
@@ -726,8 +795,8 @@ export function LearningWorkspace() {
             (appendRequestedTerms.length > 0 ? appendRequestedTerms.join("、") : queuedFiles[0]?.name) ??
             "新识别任务",
           rawText: payload.rawText ?? payload.cleanedText ?? "",
-          entries: resolvedEntries,
-          properNouns: resolvedProperNouns,
+          entries: combinedResolvedEntries,
+          properNouns: [],
           feishuLink: payload.feishuLink ?? config.feishuLink,
         });
 
@@ -736,15 +805,15 @@ export function LearningWorkspace() {
         appendAnalysisToTask({
           taskId: targetTaskId,
           rawText: payload.rawText ?? payload.cleanedText,
-          entries: resolvedEntries,
-          properNouns: resolvedProperNouns,
+          entries: combinedResolvedEntries,
+          properNouns: [],
           feishuLink: payload.feishuLink ?? config.feishuLink,
         });
       }
 
       setQueuedFiles([]);
       setStatusMessage(
-        `分析完成，已生成 ${resolvedEntries.length} 条学习词汇、${resolvedProperNouns.length} 条专有名词${
+        `分析完成，已生成 ${combinedResolvedEntries.length} 条词汇/短语${
           targetTaskName ? `，已追加到「${targetTaskName}」` : ""
         }。文本模型：${payload.effectiveModel ?? config.arkModel}${
           payload.resolvedModelId ? ` / ${payload.resolvedModelId}` : ""
@@ -838,7 +907,13 @@ export function LearningWorkspace() {
                       <div className="mt-3 flex gap-2">
                         <button
                           type="button"
-                          onClick={() => startRename(task.id, task.name)}
+                          onPointerDown={stopTaskActionEvent}
+                          onMouseDown={stopTaskActionEvent}
+                          onTouchStart={stopTaskActionEvent}
+                          onClick={(event) => {
+                            stopTaskActionEvent(event);
+                            startRename(task.id, task.name);
+                          }}
                           className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs ${
                             active ? "bg-white/15 text-white" : "bg-white text-stone-700"
                           }`}
@@ -848,7 +923,13 @@ export function LearningWorkspace() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => confirmDeleteTask(task.id, task.name)}
+                          onPointerDown={stopTaskActionEvent}
+                          onMouseDown={stopTaskActionEvent}
+                          onTouchStart={stopTaskActionEvent}
+                          onClick={(event) => {
+                            stopTaskActionEvent(event);
+                            confirmDeleteTask(task.id, task.name);
+                          }}
                           className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs ${
                             active ? "bg-white/15 text-white" : "bg-white text-stone-700"
                           }`}
@@ -879,9 +960,11 @@ export function LearningWorkspace() {
             <div className="flex items-start justify-end gap-3">
               <button
                 type="button"
-                onClick={() =>
-                  setDraft("请在原有结果基础上继续追加新的高级词汇和短语，不要重复已有词条。")
-                }
+                onClick={() => {
+                  if (selectedAction !== "文字追加" && draft.trim()) {
+                    setSavedAnalysisPrompt(draft);
+                  }
+                }}
                 className="max-w-full break-words rounded-[24px] rounded-tr-md bg-stone-900 px-4 py-3 text-left text-sm leading-7 text-white transition hover:bg-stone-800 sm:max-w-[92%]"
               >
                 {draft}
@@ -909,9 +992,7 @@ export function LearningWorkspace() {
                     setDraft("");
                   }
                   if (label === "上传图片/文件") {
-                    if (!draft.trim()) {
-                      setDraft("请仔细阅读原文，对每句话尽可能提取更多高质量、超过高中英语水平的单词和短语，也可以提取有学习价值的人名、地名、机构名、头衔和其他专有名词，并给出中文意思、例句和发音。");
-                    }
+                    setDraft(savedAnalysisPrompt.trim() ? savedAnalysisPrompt : defaultAnalysisPrompt);
                     fileInputRef.current?.click();
                   }
                 }}
@@ -991,7 +1072,13 @@ export function LearningWorkspace() {
               <CloudUpload className="h-4 w-4" />
               <input
                 value={draft}
-                onChange={(event) => setDraft(event.target.value)}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setDraft(nextValue);
+                  if (selectedAction !== "文字追加" && nextValue.trim()) {
+                    setSavedAnalysisPrompt(nextValue);
+                  }
+                }}
                 className="min-w-0 flex-1 bg-transparent outline-none"
               />
             </div>

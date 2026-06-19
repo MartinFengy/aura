@@ -54,6 +54,7 @@ function fromTaskRow(row: LearningTaskRow): RecognitionTask {
     rawText: row.raw_text ?? "",
     feishuLink: row.feishu_link ?? undefined,
     entries: Array.isArray(row.entries) ? row.entries : [],
+    properNouns: [],
   };
 }
 
@@ -182,4 +183,3 @@ export async function deleteDictationSessionFromCloud(
     throw error;
   }
 }
-

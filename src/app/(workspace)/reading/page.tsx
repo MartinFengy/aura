@@ -21,6 +21,75 @@ import { useLearningTasks } from "@/hooks/use-learning-tasks";
 import { getRecognitionEntryQuality } from "@/lib/recognition-quality";
 import { speakText } from "@/lib/speech";
 
+function normalizeSentenceForDisplayOrder(value: string) {
+  return value
+    .replace(/[“”‘’"']/g, "")
+    .replace(/[^A-Za-z0-9\s-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function findEntryReadingPosition(rawText: string, sentence: string, vocabulary: string) {
+  const normalizedRawText = normalizeSentenceForDisplayOrder(rawText);
+  const normalizedSentence = normalizeSentenceForDisplayOrder(sentence);
+  const normalizedVocabulary = normalizeSentenceForDisplayOrder(vocabulary);
+
+  const sentenceIndex =
+    normalizedSentence.length > 0
+      ? normalizedRawText.indexOf(normalizedSentence)
+      : -1;
+  const vocabularyIndex =
+    normalizedVocabulary.length > 0
+      ? normalizedRawText.indexOf(normalizedVocabulary)
+      : -1;
+
+  return {
+    sentenceIndex: sentenceIndex >= 0 ? sentenceIndex : Number.MAX_SAFE_INTEGER,
+    vocabularyIndex:
+      vocabularyIndex >= 0 ? vocabularyIndex : Number.MAX_SAFE_INTEGER,
+  };
+}
+
+function sortEntriesByReadingOrder<T extends { sentence: string; vocabulary: string }>(
+  rawText: string,
+  entries: T[],
+) {
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => {
+      const leftPosition = findEntryReadingPosition(
+        rawText,
+        left.entry.sentence,
+        left.entry.vocabulary,
+      );
+      const rightPosition = findEntryReadingPosition(
+        rawText,
+        right.entry.sentence,
+        right.entry.vocabulary,
+      );
+
+      if (leftPosition.sentenceIndex !== rightPosition.sentenceIndex) {
+        return leftPosition.sentenceIndex - rightPosition.sentenceIndex;
+      }
+
+      if (leftPosition.vocabularyIndex !== rightPosition.vocabularyIndex) {
+        return leftPosition.vocabularyIndex - rightPosition.vocabularyIndex;
+      }
+
+      return left.index - right.index;
+    })
+    .map((item) => item.entry);
+}
+
+function stopEntryActionEvent(event: {
+  preventDefault: () => void;
+  stopPropagation: () => void;
+}) {
+  event.preventDefault();
+  event.stopPropagation();
+}
+
 export default function ReadingPage() {
   const { selectedTask, tasks, deleteEntry } = useLearningTasks();
   const { config } = useAuraConfig();
@@ -29,8 +98,14 @@ export default function ReadingPage() {
   const [syncMessage, setSyncMessage] = useState("");
   const [permissionUrl, setPermissionUrl] = useState("");
   const [isSyncing, setIsSyncing] = useState(false);
-  const entries = useMemo(() => selectedTask?.entries ?? [], [selectedTask]);
-  const properNouns = useMemo(() => selectedTask?.properNouns ?? [], [selectedTask]);
+  const entries = useMemo(
+    () =>
+      sortEntriesByReadingOrder(selectedTask?.rawText ?? "", [
+        ...(selectedTask?.entries ?? []),
+        ...(selectedTask?.properNouns ?? []),
+      ]),
+    [selectedTask],
+  );
   const totalPages = Math.max(1, Math.ceil(entries.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pagedEntries = useMemo(
@@ -112,15 +187,14 @@ export default function ReadingPage() {
               {selectedTask?.name ?? "当前识别任务"}
             </h3>
             <p className="mt-2 text-[13px] leading-6 text-stone-600 sm:text-sm sm:leading-7">
-              已识别 {entries.length} 条学习词汇、{properNouns.length} 条专有名词，支持完整句子、中文意思、句子翻译、例句和发音试听。
+              已识别 {entries.length} 条词汇与短语，包含学习词汇、固定搭配、人名、地名与其他高价值表达，支持完整句子、中文意思、句子翻译、例句和发音试听。
             </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
             {[
               { label: "识别任务", value: `${tasks.length} 个`, icon: Sparkles },
-              { label: "学习词汇", value: `${entries.length} 条`, icon: Languages },
-              { label: "专有名词", value: `${properNouns.length} 条`, icon: ListMusic },
+              { label: "当前词条", value: `${entries.length} 条`, icon: Languages },
               { label: "发音片段", value: `${entries.length * 3} 段`, icon: AudioLines },
             ].map(({ label, value, icon: Icon }) => (
               <div
@@ -270,7 +344,7 @@ export default function ReadingPage() {
                 <div className="mt-4 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
                   <p className="text-[11px] text-stone-500">中文意思</p>
                   <p className="mt-1 text-sm leading-6 text-stone-700">
-                    {quality.invalidChinese ? "中文释义未通过质检，请重新识别或删除该词条。" : entry.chinese}
+                    {entry.chinese || " "}
                   </p>
                 </div>
                 {entry.sentenceChinese ? (
@@ -282,7 +356,7 @@ export default function ReadingPage() {
                 <div className="mt-3 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
                   <p className="text-[11px] text-stone-500">例句</p>
                   <p className="mt-1 text-sm leading-6 text-stone-700">
-                    {quality.invalidExample ? "例句未通过质检，请重新识别或删除该词条。" : entry.example}
+                    {entry.example || " "}
                   </p>
                 </div>
                 {entry.exampleChinese ? (
@@ -295,18 +369,24 @@ export default function ReadingPage() {
                   <button
                     type="button"
                     onClick={() => speakText(entry.example)}
-                    disabled={quality.invalidExample}
+                    disabled={!entry.example}
                     className="inline-flex items-center gap-1 rounded-full bg-[#f3eadf] px-3 py-1.5 text-[11px] text-stone-800 disabled:opacity-40"
                   >
                     <Mic2 className="h-3.5 w-3.5" />
                     例句发音
                   </button>
                   {selectedTask ? (
-                    <button
-                      type="button"
-                      onClick={() => confirmDeleteEntry(entry.id, entry.vocabulary)}
-                      className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-[11px] text-stone-700"
-                    >
+                  <button
+                    type="button"
+                    onPointerDown={stopEntryActionEvent}
+                    onMouseDown={stopEntryActionEvent}
+                    onTouchStart={stopEntryActionEvent}
+                    onClick={(event) => {
+                      stopEntryActionEvent(event);
+                      confirmDeleteEntry(entry.id, entry.vocabulary);
+                    }}
+                    className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-[11px] text-stone-700"
+                  >
                       <Trash2 className="h-3.5 w-3.5" />
                       删除词条
                     </button>
@@ -375,7 +455,7 @@ export default function ReadingPage() {
                     </td>
                     <td className="px-4 py-4 align-top text-sm leading-7 text-stone-700">
                       <div className="max-w-[320px] space-y-2">
-                        <div>{quality.invalidChinese ? "中文释义未通过质检，请重新识别或删除该词条。" : entry.chinese}</div>
+                        <div>{entry.chinese || " "}</div>
                         {entry.sentenceChinese ? (
                           <div className="text-stone-500">{entry.sentenceChinese}</div>
                         ) : null}
@@ -385,7 +465,7 @@ export default function ReadingPage() {
                       <div className="flex flex-wrap items-start gap-3">
                         <div className="max-w-[460px]">
                           <div>
-                            {quality.invalidExample ? "例句未通过质检，请重新识别或删除该词条。" : entry.example}
+                            {entry.example || " "}
                           </div>
                           {entry.exampleChinese ? (
                             <div className="mt-2 text-stone-500">{entry.exampleChinese}</div>
@@ -394,7 +474,7 @@ export default function ReadingPage() {
                         <button
                           type="button"
                           onClick={() => speakText(entry.example)}
-                          disabled={quality.invalidExample}
+                          disabled={!entry.example}
                           className="inline-flex items-center gap-1 rounded-full bg-[#f3eadf] px-3 py-1.5 text-xs text-stone-800 disabled:opacity-40"
                         >
                           <Mic2 className="h-3.5 w-3.5" />
@@ -403,7 +483,13 @@ export default function ReadingPage() {
                         {selectedTask ? (
                           <button
                             type="button"
-                            onClick={() => confirmDeleteEntry(entry.id, entry.vocabulary)}
+                            onPointerDown={stopEntryActionEvent}
+                            onMouseDown={stopEntryActionEvent}
+                            onTouchStart={stopEntryActionEvent}
+                            onClick={(event) => {
+                              stopEntryActionEvent(event);
+                              confirmDeleteEntry(entry.id, entry.vocabulary);
+                            }}
                             className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -419,61 +505,6 @@ export default function ReadingPage() {
           </div>
         </div>
 
-        {properNouns.length > 0 ? (
-          <div className="mt-6 rounded-[28px] border border-white/70 bg-white/80 p-5 sm:p-6">
-            <div className="flex items-center gap-2 text-sm uppercase tracking-[0.25em] text-stone-500">
-              <Languages className="h-4 w-4" />
-              专有名词
-            </div>
-            <p className="mt-3 text-sm leading-7 text-stone-600">
-              这部分单独保留人名、地名、机构名和头衔，不再挤占学习词汇数量。
-            </p>
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              {properNouns.map((entry) => (
-                <div key={entry.id} className="rounded-[22px] border border-white/70 bg-[#fbf8f4] px-4 py-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="rounded-full bg-[#f3eadf] px-3 py-1.5 text-sm font-medium text-stone-900">
-                      {entry.vocabulary}
-                    </div>
-                    <div className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-[11px] text-stone-600">
-                      {entry.partOfSpeech || "proper noun"}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => speakText(entry.vocabulary)}
-                      className="inline-flex items-center gap-1 rounded-full bg-stone-900 px-3 py-1.5 text-[11px] text-white"
-                    >
-                      <Volume2 className="h-3.5 w-3.5" />
-                      词条发音
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => speakText(entry.sentence)}
-                      className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-[11px] text-stone-700"
-                    >
-                      <Languages className="h-3.5 w-3.5" />
-                      原句发音
-                    </button>
-                  </div>
-                  <p className="mt-3 text-sm leading-6 text-stone-700">{entry.sentence}</p>
-                  <p className="mt-3 text-sm text-stone-800">{entry.chinese}</p>
-                  {entry.sentenceChinese ? (
-                    <p className="mt-2 text-sm text-stone-500">{entry.sentenceChinese}</p>
-                  ) : null}
-                  {entry.example ? (
-                    <div className="mt-3 rounded-[18px] bg-white px-3 py-3">
-                      <p className="text-[11px] text-stone-500">例句</p>
-                      <p className="mt-1 text-sm leading-6 text-stone-700">{entry.example}</p>
-                      {entry.exampleChinese ? (
-                        <p className="mt-2 text-sm text-stone-500">{entry.exampleChinese}</p>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
       </GlassCard>
     </div>
   );

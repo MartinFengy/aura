@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -110,19 +111,88 @@ function readStoredHistory(userKey: string) {
   }
 }
 
+function writeStoredTasks(userKey: string, tasks: RecognitionTask[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(
+    getTasksStorageKey(userKey),
+    JSON.stringify(tasks),
+  );
+}
+
+function filterTaskPendingDeletedEntries(
+  task: RecognitionTask,
+  pendingDeletedEntryIdsByTask?: Map<string, Set<string>>,
+) {
+  const pendingDeletedEntryIds = pendingDeletedEntryIdsByTask?.get(task.id);
+  if (!pendingDeletedEntryIds || pendingDeletedEntryIds.size === 0) {
+    return task;
+  }
+
+  return {
+    ...task,
+    entries: task.entries.filter((entry) => !pendingDeletedEntryIds.has(entry.id)),
+    properNouns: (task.properNouns ?? []).filter((entry) => !pendingDeletedEntryIds.has(entry.id)),
+  };
+}
+
 function mergeTasks(
   localTasks: RecognitionTask[],
   cloudTasks: RecognitionTask[],
+  pendingDeletedEntryIdsByTask?: Map<string, Set<string>>,
 ) {
   const merged = new Map<string, RecognitionTask>();
 
   for (const task of cloudTasks) {
-    merged.set(task.id, sanitizeRecognitionTaskEntries(task));
+    const localTaskSource = localTasks.find((candidate) => candidate.id === task.id);
+    const localTask = localTaskSource
+      ? filterTaskPendingDeletedEntries(localTaskSource, pendingDeletedEntryIdsByTask)
+      : undefined;
+    const pendingDeletedEntries = pendingDeletedEntryIdsByTask?.get(task.id) ?? new Set<string>();
+    const cloudEntries = (task.entries ?? []).filter((entry) => !pendingDeletedEntries.has(entry.id));
+    const localEntries = (localTask?.entries ?? []).filter(
+      (entry) => !pendingDeletedEntries.has(entry.id),
+    );
+    const cloudProperNouns = (task.properNouns ?? []).filter(
+      (entry) => !pendingDeletedEntries.has(entry.id),
+    );
+    const localProperNouns = (localTask?.properNouns ?? []).filter(
+      (entry) => !pendingDeletedEntries.has(entry.id),
+    );
+    const resolvedEntries = localTask ? localEntries : cloudEntries;
+    const resolvedProperNouns = localTask ? localProperNouns : cloudProperNouns;
+    merged.set(
+      task.id,
+      sanitizeRecognitionTaskEntries({
+        ...task,
+        ...(localTask
+          ? {
+              name: localTask.name,
+              source: localTask.source,
+              createdAt: localTask.createdAt,
+              feishuLink: localTask.feishuLink ?? task.feishuLink,
+            }
+          : {}),
+        rawText:
+          (localTask?.rawText?.length ?? 0) > (task.rawText?.length ?? 0)
+            ? localTask?.rawText ?? ""
+            : task.rawText || localTask?.rawText || "",
+        entries: resolvedEntries,
+        properNouns: resolvedProperNouns,
+      }),
+    );
   }
 
   for (const task of localTasks) {
     if (!merged.has(task.id)) {
-      merged.set(task.id, sanitizeRecognitionTaskEntries(task));
+      merged.set(
+        task.id,
+        sanitizeRecognitionTaskEntries(
+          filterTaskPendingDeletedEntries(task, pendingDeletedEntryIdsByTask),
+        ),
+      );
     }
   }
 
@@ -185,6 +255,8 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [practiceHistory, setPracticeHistory] = useState<DictationSession[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  const pendingDeletedTaskIdsRef = useRef<Set<string>>(new Set());
+  const pendingDeletedEntryIdsRef = useRef<Map<string, Set<string>>>(new Map());
 
   useEffect(() => {
     const browserClient = getSupabaseBrowserClient();
@@ -242,7 +314,9 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     async function hydrateData({ forceCloudRefresh = false } = {}) {
-      const nextTasks = readStoredTasks(activeUserKey);
+      const nextTasks = readStoredTasks(activeUserKey)
+        .filter((task) => !pendingDeletedTaskIdsRef.current.has(task.id))
+        .map((task) => filterTaskPendingDeletedEntries(task, pendingDeletedEntryIdsRef.current));
       const nextHistory = readStoredHistory(activeUserKey);
       const browserClient = getSupabaseBrowserClient();
 
@@ -260,11 +334,14 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
 
       try {
         const cloudData = await fetchCloudLearningData(browserClient, cloudUserId);
-        const mergedTasks = mergeTasks(nextTasks, cloudData.tasks);
+        const cloudTasks = cloudData.tasks.filter(
+          (task) => !pendingDeletedTaskIdsRef.current.has(task.id),
+        );
+        const mergedTasks = mergeTasks(nextTasks, cloudTasks, pendingDeletedEntryIdsRef.current);
         const mergedHistory = mergeHistory(nextHistory, cloudData.practiceHistory);
 
         const needsTaskMigration =
-          cloudData.tasks.length === 0 && mergedTasks.length > 0;
+          cloudTasks.length === 0 && mergedTasks.length > 0;
         const needsHistoryMigration =
           cloudData.practiceHistory.length === 0 && mergedHistory.length > 0;
 
@@ -286,12 +363,8 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        const resolvedTasks =
-          forceCloudRefresh || cloudData.tasks.length > 0 ? cloudData.tasks : mergedTasks;
-        const resolvedHistory =
-          forceCloudRefresh || cloudData.practiceHistory.length > 0
-            ? cloudData.practiceHistory
-            : mergedHistory;
+        const resolvedTasks = mergedTasks;
+        const resolvedHistory = mergedHistory;
 
         setTasks(resolvedTasks);
         setPracticeHistory(resolvedHistory);
@@ -562,8 +635,10 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
   }
 
   function deleteTask(taskId: string) {
+    pendingDeletedTaskIdsRef.current.add(taskId);
     setTasks((current) => {
       const next = current.filter((task) => task.id !== taskId);
+      writeStoredTasks(activeUserKey, next);
       setSelectedTaskId((selected) =>
         selected === taskId ? next[0]?.id ?? "" : selected,
       );
@@ -571,16 +646,27 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
     });
     const browserClient = getSupabaseBrowserClient();
     if (browserClient && cloudUserId) {
-      void deleteTaskFromCloud(browserClient, cloudUserId, taskId).catch((error) => {
-        console.error("Failed to delete task from cloud", error);
-      });
+      void deleteTaskFromCloud(browserClient, cloudUserId, taskId)
+        .catch((error) => {
+          pendingDeletedTaskIdsRef.current.delete(taskId);
+          console.error("Failed to delete task from cloud", error);
+        });
+      return;
     }
+    pendingDeletedTaskIdsRef.current.delete(taskId);
   }
 
   function deleteEntry(params: { taskId: string; entryId: string }) {
+    const existingPendingEntryIds =
+      pendingDeletedEntryIdsRef.current.get(params.taskId) ?? new Set<string>();
+    pendingDeletedEntryIdsRef.current.set(
+      params.taskId,
+      new Set([...existingPendingEntryIds, params.entryId]),
+    );
     let nextTask: null | RecognitionTask = null;
     setTasks((current) =>
-      current.map((task) => {
+      {
+        const nextTasks = current.map((task) => {
         if (task.id !== params.taskId) {
           return task;
         }
@@ -588,15 +674,36 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
         nextTask = {
           ...task,
           entries: task.entries.filter((entry) => entry.id !== params.entryId),
+          properNouns: (task.properNouns ?? []).filter((entry) => entry.id !== params.entryId),
         };
         return nextTask;
-      }),
+        });
+
+        writeStoredTasks(activeUserKey, nextTasks);
+        return nextTasks;
+      },
     );
     const browserClient = getSupabaseBrowserClient();
     if (browserClient && cloudUserId && nextTask) {
-      void upsertTaskToCloud(browserClient, cloudUserId, nextTask).catch((error) => {
-        console.error("Failed to delete entry from cloud task", error);
-      });
+      void upsertTaskToCloud(browserClient, cloudUserId, nextTask)
+        .catch((error) => {
+          const pendingEntryIds = pendingDeletedEntryIdsRef.current.get(params.taskId);
+          if (pendingEntryIds) {
+            pendingEntryIds.delete(params.entryId);
+            if (pendingEntryIds.size === 0) {
+              pendingDeletedEntryIdsRef.current.delete(params.taskId);
+            }
+          }
+          console.error("Failed to delete entry from cloud task", error);
+        });
+      return;
+    }
+    const pendingEntryIds = pendingDeletedEntryIdsRef.current.get(params.taskId);
+    if (pendingEntryIds) {
+      pendingEntryIds.delete(params.entryId);
+      if (pendingEntryIds.size === 0) {
+        pendingDeletedEntryIdsRef.current.delete(params.taskId);
+      }
     }
   }
 

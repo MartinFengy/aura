@@ -622,10 +622,10 @@ export default function LexiconPage() {
                         {entry.vocabulary}
                       </p>
                       <p className="mt-2 text-[12px] leading-5 text-stone-500 sm:text-sm sm:leading-6">
-                        {quality.invalidChinese ? "中文释义未通过质检，请重新识别或删除该词条。" : entry.chinese}
+                        {entry.chinese || " "}
                       </p>
                       <p className="mt-2 break-words text-[12px] leading-5 text-stone-600 sm:text-sm sm:leading-6">
-                        {quality.invalidExample ? "例句未通过质检，请重新识别或删除该词条。" : entry.example}
+                        {entry.example || " "}
                       </p>
                       <div className="mt-3 flex flex-wrap gap-2">
                         <button
@@ -639,7 +639,7 @@ export default function LexiconPage() {
                         <button
                           type="button"
                           onClick={() => speakText(entry.example)}
-                          disabled={quality.invalidExample}
+                          disabled={!entry.example}
                           className="inline-flex min-w-0 items-center gap-1 rounded-full border border-stone-200 bg-white px-2.5 py-1.5 text-[10px] text-stone-700 sm:gap-2 sm:px-3 sm:text-xs"
                         >
                           <Play className="h-3.5 w-3.5" />
@@ -1056,11 +1056,11 @@ export default function LexiconPage() {
                             </button>
                           </div>
                           <p className="mt-2 text-base text-stone-600 sm:text-lg">
-                            {quality.invalidChinese ? "中文释义未通过质检，请重新识别或删除该词条。" : currentEntry.chinese}
+                            {currentEntry.chinese || " "}
                           </p>
                           <p className="mt-4 text-sm leading-7 text-stone-700 sm:text-base">{currentEntry.sentence}</p>
                           <p className="mt-4 text-sm leading-7 text-stone-700 sm:text-base">
-                            {quality.invalidExample ? "例句未通过质检，请重新识别或删除该词条。" : currentEntry.example}
+                            {currentEntry.example || " "}
                           </p>
                             </>
                             );
