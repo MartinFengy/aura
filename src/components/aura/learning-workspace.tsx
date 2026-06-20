@@ -289,6 +289,13 @@ function mergeAppendEntries(
   return merged;
 }
 
+function countTaskEntries(taskLike: {
+  entries?: Array<unknown>;
+  properNouns?: Array<unknown>;
+}) {
+  return (taskLike.entries?.length ?? 0) + (taskLike.properNouns?.length ?? 0);
+}
+
 function findAppendTarget(params: {
   tasks: RecognitionTask[];
   selectedTaskId?: string;
@@ -800,33 +807,48 @@ export function LearningWorkspace() {
           feishuLink: payload.feishuLink ?? config.feishuLink,
         });
 
-        addTaskFromAnalysis(task);
+        const savedTask = addTaskFromAnalysis(task);
+        const savedCount = countTaskEntries(savedTask);
+        setQueuedFiles([]);
+        setStatusMessage(
+          `分析完成，已生成 ${savedCount} 条词汇/短语。文本模型：${payload.effectiveModel ?? config.arkModel}${
+            payload.resolvedModelId ? ` / ${payload.resolvedModelId}` : ""
+          }；图片识别：${payload.effectiveVisionModel ?? config.arkModel}${
+            payload.resolvedVisionModelId ? ` / ${payload.resolvedVisionModelId}` : ""
+          }${
+            payload.ocrMethod === "hybrid"
+              ? "（已使用 OCR + AI 混合补全）"
+              : payload.ocrMethod === "tesseract"
+                ? "（已优先使用本地 OCR）"
+                : ""
+          }。`,
+        );
       } else if (targetTaskId) {
-        appendAnalysisToTask({
+        const savedTask = appendAnalysisToTask({
           taskId: targetTaskId,
           rawText: payload.rawText ?? payload.cleanedText,
           entries: combinedResolvedEntries,
           properNouns: [],
           feishuLink: payload.feishuLink ?? config.feishuLink,
         });
+        const savedCount = savedTask ? countTaskEntries(savedTask) : combinedResolvedEntries.length;
+        setQueuedFiles([]);
+        setStatusMessage(
+          `分析完成，已生成 ${savedCount} 条词汇/短语${
+            targetTaskName ? `，已追加到「${targetTaskName}」` : ""
+          }。文本模型：${payload.effectiveModel ?? config.arkModel}${
+            payload.resolvedModelId ? ` / ${payload.resolvedModelId}` : ""
+          }；图片识别：${payload.effectiveVisionModel ?? config.arkModel}${
+            payload.resolvedVisionModelId ? ` / ${payload.resolvedVisionModelId}` : ""
+          }${
+            payload.ocrMethod === "hybrid"
+              ? "（已使用 OCR + AI 混合补全）"
+              : payload.ocrMethod === "tesseract"
+                ? "（已优先使用本地 OCR）"
+                : ""
+          }。`,
+        );
       }
-
-      setQueuedFiles([]);
-      setStatusMessage(
-        `分析完成，已生成 ${combinedResolvedEntries.length} 条词汇/短语${
-          targetTaskName ? `，已追加到「${targetTaskName}」` : ""
-        }。文本模型：${payload.effectiveModel ?? config.arkModel}${
-          payload.resolvedModelId ? ` / ${payload.resolvedModelId}` : ""
-        }；图片识别：${payload.effectiveVisionModel ?? config.arkModel}${
-          payload.resolvedVisionModelId ? ` / ${payload.resolvedVisionModelId}` : ""
-        }${
-          payload.ocrMethod === "hybrid"
-            ? "（已使用 OCR + AI 混合补全）"
-            : payload.ocrMethod === "tesseract"
-              ? "（已优先使用本地 OCR）"
-              : ""
-        }。`,
-      );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "分析失败，请稍后再试。";
       setStatusMessage(errorMessage);

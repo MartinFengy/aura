@@ -61,7 +61,7 @@ type LearningTasksContextValue = {
     entries: RecognitionTask["entries"];
     properNouns?: RecognitionTask["properNouns"];
     feishuLink?: string;
-  }) => void;
+  }) => RecognitionTask | null;
   renameTask: (taskId: string, name: string) => void;
   deleteTask: (taskId: string) => void;
   deleteEntry: (params: { taskId: string; entryId: string }) => void;
@@ -589,6 +589,8 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
         console.error("Failed to append task analysis to cloud", error);
       });
     }
+
+    return nextTask;
   }
 
   function replaceTaskEntries(params: {
