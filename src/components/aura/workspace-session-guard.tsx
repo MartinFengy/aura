@@ -5,6 +5,20 @@ import { useRouter } from "next/navigation";
 import { clearActiveUserKey } from "@/lib/learning-store";
 import { getSupabaseBrowserClient, hasSupabaseEnv } from "@/lib/supabase";
 
+const LOCAL_DEV_BYPASS_KEY = "aura-local-dev-bypass";
+
+function canUseLocalBypass() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const isLocalHost =
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1";
+
+  return isLocalHost && window.localStorage.getItem(LOCAL_DEV_BYPASS_KEY) === "1";
+}
+
 export function WorkspaceSessionGuard({
   children,
 }: {
@@ -25,6 +39,11 @@ export function WorkspaceSessionGuard({
     let cancelled = false;
 
     async function checkSession() {
+      if (canUseLocalBypass()) {
+        setReady(true);
+        return;
+      }
+
       const {
         data: { user },
       } = await client.auth.getUser();
@@ -47,6 +66,11 @@ export function WorkspaceSessionGuard({
     const {
       data: { subscription },
     } = client.auth.onAuthStateChange((_event, session) => {
+      if (canUseLocalBypass()) {
+        setReady(true);
+        return;
+      }
+
       if (!session?.user) {
         clearActiveUserKey();
         router.replace("/login");

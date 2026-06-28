@@ -19,11 +19,54 @@ import {
 } from "lucide-react";
 import { GlassCard } from "@/components/aura/glass-card";
 import { useLearningTasks } from "@/hooks/use-learning-tasks";
-import { getRecognitionEntryQuality } from "@/lib/recognition-quality";
+import {
+  getRecognitionEntryQuality,
+  isLowQualityChineseMeaning,
+} from "@/lib/recognition-quality";
 import type { DictationMode, DictationResult } from "@/lib/learning-store";
 import { speakSequence, speakText, stopSpeaking } from "@/lib/speech";
 
 type ScopedEntry = ReturnType<typeof buildScopedEntries>[number];
+
+function resolveDisplayChinese(entry: {
+  vocabulary: string;
+  chinese: string;
+  partOfSpeech?: string;
+  sentenceChinese?: string;
+  exampleChinese?: string;
+}) {
+  if (!isLowQualityChineseMeaning(entry.vocabulary, entry.chinese)) {
+    return entry.chinese;
+  }
+
+  if (entry.sentenceChinese?.trim()) {
+    return entry.sentenceChinese.trim();
+  }
+
+  if (entry.exampleChinese?.trim()) {
+    return entry.exampleChinese.trim();
+  }
+
+  if (entry.chinese?.trim()) {
+    return entry.chinese.trim();
+  }
+
+  const partOfSpeech = entry.partOfSpeech?.toLowerCase() ?? "";
+  if (partOfSpeech.includes("proper")) {
+    return "专有名词";
+  }
+  if (partOfSpeech.includes("verb")) {
+    return "动词表达";
+  }
+  if (partOfSpeech.includes("noun")) {
+    return "名词性表达";
+  }
+  if (partOfSpeech.includes("adjective")) {
+    return "形容词表达";
+  }
+
+  return "固定表达";
+}
 
 function buildScopedEntries(taskIds: string[], tasks: ReturnType<typeof useLearningTasks>["tasks"]) {
   return tasks
@@ -622,7 +665,7 @@ export default function LexiconPage() {
                         {entry.vocabulary}
                       </p>
                       <p className="mt-2 text-[12px] leading-5 text-stone-500 sm:text-sm sm:leading-6">
-                        {entry.chinese || " "}
+                        {resolveDisplayChinese(entry)}
                       </p>
                       <p className="mt-2 break-words text-[12px] leading-5 text-stone-600 sm:text-sm sm:leading-6">
                         {entry.example || " "}

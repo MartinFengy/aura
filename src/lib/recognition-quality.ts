@@ -29,6 +29,13 @@ const LOW_QUALITY_EXAMPLE_PATTERNS = [
   /^.+ was mentioned repeatedly in the official statement\.$/i,
 ] as const;
 
+const LOW_QUALITY_TRANSLATION_PATTERNS = [
+  /^原句围绕[“"].+[”"]这一表达展开。?$/,
+  /^这个例句展示了[“"].+[”"]在语境中的自然用法。?$/,
+  /^原句翻译待补充$/,
+  /^例句翻译待补充$/,
+] as const;
+
 export function normalizeSentence(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -175,6 +182,15 @@ export function isLowQualityExample(sentence: string, example: string) {
   }
 
   return false;
+}
+
+export function isLowQualityTranslation(value: string) {
+  const normalized = normalizeSentence(value);
+  if (!normalized) {
+    return true;
+  }
+
+  return LOW_QUALITY_TRANSLATION_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 export function sanitizeRecognitionEntry<T extends EntryLike>(entry: T): T {

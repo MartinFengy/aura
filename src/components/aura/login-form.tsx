@@ -16,10 +16,21 @@ import { getSupabaseBrowserClient, hasSupabaseEnv } from "@/lib/supabase";
 import { setActiveUserKey } from "@/lib/learning-store";
 
 type Mode = "login" | "register";
+const LOCAL_DEV_BYPASS_KEY = "aura-local-dev-bypass";
 
 export function LoginForm() {
   const router = useRouter();
   const supabaseEnabled = useMemo(() => hasSupabaseEnv(), []);
+  const localDevHost = useMemo(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    return (
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1"
+    );
+  }, []);
   const [mode, setMode] = useState<Mode>("login");
   const [isRecoveryFlow, setIsRecoveryFlow] = useState(false);
   const [recoveryPrepared, setRecoveryPrepared] = useState(false);
@@ -261,6 +272,16 @@ export function LoginForm() {
     }
   }
 
+  function enterLocalWorkspace() {
+    const fallbackEmail = email.trim() || "local@test.dev";
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(LOCAL_DEV_BYPASS_KEY, "1");
+    }
+    setActiveUserKey(fallbackEmail);
+    setMessage("已切换到本地测试模式，正在进入学习空间。");
+    router.push("/reading");
+  }
+
   return (
     <div className="space-y-6">
       {isRecoveryFlow ? (
@@ -393,6 +414,17 @@ export function LoginForm() {
             className="w-full rounded-[22px] border border-stone-200 bg-white/70 px-4 py-3 text-sm text-stone-700 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-70"
           >
             忘记密码，发送重置邮件
+          </button>
+        ) : null}
+
+        {localDevHost && !isRecoveryFlow ? (
+          <button
+            type="button"
+            onClick={enterLocalWorkspace}
+            disabled={loading}
+            className="w-full rounded-[22px] border border-stone-200 bg-[#efe4d5] px-4 py-3 text-sm text-stone-800 transition hover:bg-[#eadac6] disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            本地测试直接进入
           </button>
         ) : null}
       </form>

@@ -175,8 +175,22 @@ const HEURISTIC_CHINESE_GLOSSARY: Record<string, string> = {
   "secretary of state marco rubio": "美国国务卿马尔科·鲁比奥",
   "marco rubio": "马可·鲁比奥",
   "capitol hill": "美国国会山",
+  "spring heat wave": "春季热浪",
   "trump administration": "特朗普政府",
   "iran war": "伊朗战争",
+  "negotiating on fumes": "在几乎没有余地的情况下谈判；勉强维持谈判",
+  "midterm elections": "中期选举",
+  "factor in": "把……考虑进去",
+  "nearly three-month-old conflict": "这场近三个月的冲突",
+  "cabinet meeting": "内阁会议",
+  "expressed confidence": "表达信心",
+  "a deal is near": "协议即将达成",
+  "ebola cases": "埃博拉病例",
+  "authorities in congo": "刚果当局",
+  "struggle to": "艰难设法；努力去",
+  "contain the outbreak": "控制疫情暴发",
+  "set up cooling stations": "设立降温站点",
+  "prompting officials to": "促使官员去……",
   "nuclear talks": "核谈判",
   optimistic: "乐观的",
   "potential for a resumption": "恢复的可能性",
@@ -253,6 +267,7 @@ const HEURISTIC_CHINESE_GLOSSARY: Record<string, string> = {
   "burning cross": "燃烧的十字架",
   "house committee": "众议院委员会",
   "behind closed doors": "闭门进行；不公开地",
+  "serial killer": "连环杀手",
   attacked: "袭击了；攻击了",
   expletives: "脏话；咒骂语",
   perturbed: "不安的；烦恼的",
@@ -279,6 +294,10 @@ const HEURISTIC_CHINESE_GLOSSARY: Record<string, string> = {
   operation: "行动",
   competition: "竞争",
   politics: "政治立场",
+  scorching: "炙烤；灼热侵袭",
+  scorch: "灼烧；炙烤",
+  cooling: "降温",
+  stations: "站点；服务点",
   delivered: "交付；交出了",
   invasion: "入侵",
   security: "安全",
@@ -351,8 +370,22 @@ const PRIORITY_HEURISTIC_PATTERNS = [
   /\bSecretary of State\b/i,
   /\bMarco Rubio\b/i,
   /\bCapitol Hill\b/i,
+  /\bspring heat wave\b/i,
+  /\bset up cooling stations\b/i,
+  /\bprompting officials to\b/i,
   /\bTrump administration\b/i,
   /\bIran war\b/i,
+  /\bnegotiating on fumes\b/i,
+  /\bmidterm elections\b/i,
+  /\bfactor in\b/i,
+  /\bnearly three-month-old conflict\b/i,
+  /\bCabinet meeting\b/i,
+  /\bexpressed confidence\b/i,
+  /\ba deal is near\b/i,
+  /\bEbola cases\b/i,
+  /\bauthorities in Congo\b/i,
+  /\bstruggle to\b/i,
+  /\bcontain the outbreak\b/i,
   /\boptimistic\b/i,
   /\bpotential for a resumption\b/i,
   /\bnuclear talks\b/i,
@@ -378,6 +411,7 @@ const PRIORITY_HEURISTIC_PATTERNS = [
   /\bsemiofficial\b/i,
   /\bgrilled\b/i,
   /\bresumption\b/i,
+  /\bserial killer\b/i,
   /\bexpletives\b/i,
   /\bperturbed\b/i,
   /\bcriticizing\b/i,
@@ -673,6 +707,13 @@ const PHRASE_EDGE_STOPWORDS = new Set([
   "while",
   "were",
   "with",
+  "say",
+  "says",
+  "said",
+  "reported",
+  "reports",
+  "called",
+  "calls",
 ]);
 
 function normalizeModelOverride(value?: string | null) {
@@ -703,19 +744,20 @@ function normalizeBaseUrlOverride(value: string, fallbackBaseUrl: string) {
   }
 }
 
-function extractJsonPayload(content: string) {
-  const fenced = content.match(/```json\s*([\s\S]*?)```/i);
+function extractJsonPayload(content: unknown) {
+  const safeContent = coerceToString(content);
+  const fenced = safeContent.match(/```json\s*([\s\S]*?)```/i);
   if (fenced?.[1]) {
     return fenced[1];
   }
 
-  const start = content.indexOf("{");
-  const end = content.lastIndexOf("}");
+  const start = safeContent.indexOf("{");
+  const end = safeContent.lastIndexOf("}");
   if (start >= 0 && end > start) {
-    return content.slice(start, end + 1);
+    return safeContent.slice(start, end + 1);
   }
 
-  return content;
+  return safeContent;
 }
 
 function normalizeEntries(entries: Array<Omit<RecognitionEntry, "id">>) {
@@ -735,11 +777,21 @@ function normalizeEntries(entries: Array<Omit<RecognitionEntry, "id">>) {
   }));
 }
 
-function normalizeSentence(value: string) {
-  return value.replace(/\s+/g, " ").trim();
+function coerceToString(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value);
 }
 
-function collapseRepeatedSentenceFragments(value: string) {
+function normalizeSentence(value: unknown) {
+  return coerceToString(value).replace(/\s+/g, " ").trim();
+}
+
+function collapseRepeatedSentenceFragments(value: unknown) {
   const normalized = normalizeSentence(value)
     .replace(/\s*<[^>\n]{1,24}\s*/g, " ")
     .replace(/\s+/g, " ")
@@ -763,16 +815,16 @@ function collapseRepeatedSentenceFragments(value: string) {
     .trim();
 }
 
-function normalizeVocabulary(value: string) {
-  return value
+function normalizeVocabulary(value: unknown) {
+  return coerceToString(value)
     .replace(/[“”’']/g, "")
     .replace(/[.,;:!?()]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function normalizeSentenceForComparison(value: string) {
-  return value
+function normalizeSentenceForComparison(value: unknown) {
+  return coerceToString(value)
     .replace(/[“”‘’"']/g, "")
     .replace(/[^A-Za-z0-9\s-]+/g, " ")
     .replace(/\s+/g, " ")
@@ -1286,6 +1338,7 @@ function isAdvancedStandaloneWord(word: string) {
       "committee",
       "communicating",
       "co-founder",
+      "cooling",
       "credibility",
       "criticizing",
       "controversies",
@@ -1308,6 +1361,8 @@ function isAdvancedStandaloneWord(word: string) {
       "politics",
       "radicalized",
       "resumption",
+      "scorch",
+      "scorching",
       "separatist",
       "shooting",
       "semiofficial",
@@ -1398,7 +1453,151 @@ function extractContextualChunks(sentence: string) {
     }
   }
 
+  const infinitiveChunks = Array.from(
+    sentence.matchAll(
+      /\b([A-Za-z-]+ing\s+[A-Za-z-]+(?:\s+[A-Za-z-]+)?\s+to)\s+([A-Za-z-]+(?:\s+[A-Za-z-]+){1,4})\b/g,
+    ),
+  );
+  for (const match of infinitiveChunks) {
+    const leadingChunk = normalizeVocabulary(match[1] ?? "");
+    const trailingChunk = normalizeVocabulary(match[2] ?? "");
+    if (countWords(leadingChunk) >= 2) {
+      chunks.push(leadingChunk);
+    }
+    if (countWords(trailingChunk) >= 2) {
+      chunks.push(trailingChunk);
+    }
+  }
+
+  const bareInfinitiveChunks = Array.from(
+    sentence.matchAll(/\bto\s+([A-Za-z-]+(?:\s+[A-Za-z-]+){1,4})\b/g),
+  );
+  for (const match of bareInfinitiveChunks) {
+    const chunk = normalizeVocabulary(match[1] ?? "");
+    if (countWords(chunk) >= 2) {
+      chunks.push(chunk);
+    }
+  }
+
+  const copulaChunks = Array.from(
+    sentence.matchAll(
+      /\b([A-Za-z-]+(?:\s+[A-Za-z-]+){1,3})\s+(?:is|are|was|were)\s+([A-Za-z-]+ing|[A-Za-z-]+ed|[A-Za-z-]+)\b/gi,
+    ),
+  );
+  for (const match of copulaChunks) {
+    const subjectChunk = normalizeVocabulary(match[1] ?? "");
+    const predicateChunk = normalizeVocabulary(match[2] ?? "");
+    if (countWords(subjectChunk) >= 2) {
+      chunks.push(subjectChunk);
+    }
+    if (isAdvancedStandaloneWord(predicateChunk) || HEURISTIC_WORD_TRANSLATIONS[predicateChunk.toLowerCase()]) {
+      chunks.push(predicateChunk);
+    }
+  }
+
+  const quotedChunks = Array.from(sentence.matchAll(/"([^"\n]{4,48})"/g));
+  for (const match of quotedChunks) {
+    const chunk = normalizeVocabulary(match[1] ?? "");
+    if (countWords(chunk) >= 2) {
+      chunks.push(chunk);
+    }
+  }
+
+  const classroomPatterns = [
+    /\bset up cooling stations\b/gi,
+    /\bprompting officials to\b/gi,
+    /\bspring heat wave\b/gi,
+    /\bmidterm elections\b/gi,
+    /\bfactor in\b/gi,
+    /\bnearly three-month-old conflict\b/gi,
+    /\bCabinet meeting\b/gi,
+    /\bexpressed confidence\b/gi,
+    /\ba deal is near\b/gi,
+    /\bSecretary of State\b/gi,
+    /\bEbola cases\b/gi,
+    /\bauthorities in Congo\b/gi,
+    /\bstruggle to\b/gi,
+    /\bcontain the outbreak\b/gi,
+    /\bserial killer\b/gi,
+  ];
+
+  for (const pattern of classroomPatterns) {
+    const matches = sentence.match(pattern) ?? [];
+    for (const match of matches) {
+      chunks.push(normalizeVocabulary(match));
+    }
+  }
+
   return chunks;
+}
+
+function isProperNounLikeCandidate(value: string) {
+  return (
+    /^(?:President|Prime Minister|Secretary of State|Congressman)\s+[A-Z][A-Za-z-]+(?:\s+[A-Z][A-Za-z-]+){0,3}$/.test(
+      value,
+    ) ||
+    /^[A-Z][A-Za-z-]+(?:\s+[A-Z][A-Za-z-]+){1,4}$/.test(value)
+  );
+}
+
+function shouldCollapseToLongestProperNounVariant(shorter: string, longer: string) {
+  const normalizedShorter = normalizeVocabulary(shorter).toLowerCase();
+  const normalizedLonger = normalizeVocabulary(longer).toLowerCase();
+  if (
+    !normalizedShorter ||
+    !normalizedLonger ||
+    normalizedShorter === normalizedLonger ||
+    !isProperNounLikeCandidate(shorter) ||
+    !isProperNounLikeCandidate(longer)
+  ) {
+    return false;
+  }
+
+  if (
+    normalizedLonger.includes(normalizedShorter) &&
+    countWords(longer) > countWords(shorter)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function wordOverlapRatio(left: string, right: string) {
+  const leftWords = tokenizeVocabularyWords(normalizeVocabulary(left).toLowerCase());
+  const rightWords = tokenizeVocabularyWords(normalizeVocabulary(right).toLowerCase());
+  if (leftWords.length === 0 || rightWords.length === 0) {
+    return 0;
+  }
+
+  const leftSet = new Set(leftWords);
+  const matched = rightWords.filter((word) => leftSet.has(word)).length;
+  return matched / Math.max(Math.min(leftWords.length, rightWords.length), 1);
+}
+
+function shouldPreferStandaloneWordAlongsidePhrase(shorter: string, longer: string) {
+  const normalizedShorter = normalizeVocabulary(shorter).toLowerCase();
+  const normalizedLonger = normalizeVocabulary(longer).toLowerCase();
+  const shorterWords = tokenizeVocabularyWords(normalizedShorter);
+  const longerWords = tokenizeVocabularyWords(normalizedLonger);
+
+  if (shorterWords.length !== 1 || longerWords.length < 3) {
+    return false;
+  }
+
+  if (!isAdvancedStandaloneWord(shorterWords[0] ?? "")) {
+    return false;
+  }
+
+  if (
+    normalizedLonger.startsWith(`${normalizedShorter} `) ||
+    normalizedLonger.endsWith(` ${normalizedShorter}`) ||
+    normalizedLonger === normalizedShorter
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 function scoreHeuristicCandidate(candidate: string, sentence: string) {
@@ -1484,6 +1683,49 @@ function scoreHeuristicCandidate(candidate: string, sentence: string) {
     score -= 45;
   }
 
+  if (/\b(?:has|have|had)\s+been\b/i.test(candidate) && words.length >= 3) {
+    score -= 140;
+  }
+
+  if (/\b(?:is|are|was|were)\s+being\b/i.test(candidate) && words.length >= 3) {
+    score -= 150;
+  }
+
+  if (/\b(?:is|are|was|were)\b/i.test(candidate) && words.length >= 4) {
+    score -= 85;
+  }
+
+  const toIndex = words.findIndex((word) => word.toLowerCase() === "to");
+  if (
+    toIndex > 0 &&
+    toIndex < words.length - 1 &&
+    !words[0]?.toLowerCase().endsWith("ing") &&
+    !HEURISTIC_WORD_TRANSLATIONS[(words[0] ?? "").toLowerCase()] &&
+    !isAdvancedStandaloneWord(words[0] ?? "")
+  ) {
+    score -= 95;
+  }
+
+  if (
+    /^(?:[A-Z][A-Za-z-]+(?:\s+[A-Z][A-Za-z-]+){0,2}|President\s+[A-Z][A-Za-z-]+(?:\s+[A-Z][A-Za-z-]+){0,2})\s+(?:said|left|hosted|admitted|welcomed|praised|arrived|returns?)\b/.test(
+      candidate,
+    )
+  ) {
+    score -= 140;
+  }
+
+  if (/^(?:after|before|during|inside|outside|across|around|throughout)\s+the\s+[a-z-]+$/i.test(candidate)) {
+    score -= 65;
+  }
+
+  if (/^(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+[a-z-]+$/i.test(candidate)) {
+    score -= 80;
+  }
+
+  if (/^[A-Z][a-z-]+\s+(?:helicopter|meeting|town|leaders|technology|computing)$/i.test(candidate)) {
+    score -= 90;
+  }
+
   const genericWordCount = words.filter((word) => GENERIC_HEURISTIC_WORDS.has(word.toLowerCase())).length;
   const stopwordCount = words.filter((word) => PHRASE_EDGE_STOPWORDS.has(word.toLowerCase())).length;
   score -= genericWordCount * 8;
@@ -1492,6 +1734,16 @@ function scoreHeuristicCandidate(candidate: string, sentence: string) {
   }
   if (/^(?:said|reported|described|allowed|stopped|have|was|were)\b/i.test(candidate)) {
     score -= 45;
+  }
+
+  if (
+    /^(?:officials|authorities|leaders|groups|people|analysts|lawmakers)\s+to\b/i.test(candidate)
+  ) {
+    score -= 135;
+  }
+
+  if (/\b(?:to|being|been|have|has|had)$/i.test(candidate)) {
+    score -= 160;
   }
   if (/\b(?:could|would|have|was|were|that)\b/i.test(candidate) && !NORMALIZED_HEURISTIC_CHINESE_GLOSSARY[normalized]) {
     score -= 22;
@@ -1513,6 +1765,14 @@ function scoreHeuristicCandidate(candidate: string, sentence: string) {
     score -= 120;
   }
 
+  if (
+    /\blife in prison without parole\b/i.test(sentence) &&
+    /\bsentenced to life\b/i.test(candidate) &&
+    !/\blife in prison without parole\b/i.test(candidate)
+  ) {
+    score -= 95;
+  }
+
   if (normalized === normalizedSentenceFallback(sentence)) {
     score -= 10;
   }
@@ -1522,6 +1782,254 @@ function scoreHeuristicCandidate(candidate: string, sentence: string) {
 
 function normalizedSentenceFallback(sentence: string) {
   return normalizeVocabulary(sentence).toLowerCase();
+}
+
+function isAwkwardHeuristicCandidate(candidate: string) {
+  const normalized = normalizeVocabulary(candidate);
+  const words = tokenizeVocabularyWords(normalized);
+  if (words.length < 2) {
+    return false;
+  }
+
+  const lowerWords = words.map((word) => word.toLowerCase());
+  const reportingVerbs = new Set([
+    "say",
+    "says",
+    "said",
+    "report",
+    "reported",
+    "reports",
+    "call",
+    "called",
+    "calls",
+  ]);
+  const weakTailWords = new Set([
+    "armed",
+    "gathering",
+    "holding",
+    "hosting",
+    "attending",
+    "allowing",
+    "voiced",
+  ]);
+
+  if (reportingVerbs.has(lowerWords[0] ?? "")) {
+    return true;
+  }
+
+  if (reportingVerbs.has(lowerWords.at(-1) ?? "")) {
+    return true;
+  }
+
+  if (
+    words.length === 2 &&
+    /^[A-Z][A-Za-z-]+$/.test(words[0] ?? "") &&
+    reportingVerbs.has(lowerWords[1] ?? "")
+  ) {
+    return true;
+  }
+
+  if (
+    words.length >= 2 &&
+    /^[A-Z][A-Za-z-]+(?:\s+[A-Z][A-Za-z-]+){0,3}$/.test(words.slice(0, -1).join(" ")) &&
+    reportingVerbs.has(lowerWords.at(-1) ?? "")
+  ) {
+    return true;
+  }
+
+  if (
+    words.length === 2 &&
+    reportingVerbs.has(lowerWords[0] ?? "") &&
+    weakTailWords.has(lowerWords[1] ?? "")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function isNarrativeClauseFragment(candidate: string) {
+  const normalized = normalizeVocabulary(candidate);
+  const words = tokenizeVocabularyWords(normalized);
+  if (words.length < 2 || words.length > 6) {
+    return false;
+  }
+
+  const lowerWords = words.map((word) => word.toLowerCase());
+  const weakPredicateWords = new Set([
+    "say",
+    "says",
+    "said",
+    "tell",
+    "tells",
+    "told",
+    "report",
+    "reports",
+    "reported",
+    "announce",
+    "announced",
+    "admit",
+    "admitted",
+    "appoint",
+    "appointed",
+    "deliver",
+    "delivered",
+    "fall",
+    "fell",
+    "injure",
+    "injured",
+    "leave",
+    "left",
+    "have",
+    "has",
+    "had",
+    "is",
+    "are",
+    "was",
+    "were",
+  ]);
+
+  const startsLikeSubject =
+    /^[A-Z][A-Za-z-]+$/.test(words[0] ?? "") ||
+    /^(?:local|state|federal|senior|western|eastern|northern|southern)$/i.test(words[0] ?? "") ||
+    /^(?:officials|people|media|authorities|police|lawmakers|leaders|residents|witnesses|drones|troops|fighters|vehicles)$/i.test(
+      words[0] ?? "",
+    );
+
+  if (startsLikeSubject && weakPredicateWords.has(lowerWords[1] ?? "")) {
+    return true;
+  }
+
+  if (
+    words.length >= 3 &&
+    /^(?:local|state|federal|senior)$/i.test(words[0] ?? "") &&
+    weakPredicateWords.has(lowerWords.at(-1) ?? "")
+  ) {
+    return true;
+  }
+
+  if (
+    /^(?:officials|people|media|authorities|police|lawmakers|leaders|residents|witnesses|drones|troops|fighters|vehicles)$/i.test(
+      words[0] ?? "",
+    ) &&
+    (weakPredicateWords.has(lowerWords[1] ?? "") || weakPredicateWords.has(lowerWords.at(-1) ?? ""))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+const LOW_VALUE_STANDALONE_WORDS = new Set([
+  "after",
+  "arriving",
+  "before",
+  "business",
+  "leaders",
+  "largest",
+  "meeting",
+  "nations",
+  "returns",
+  "without",
+  "workers",
+]);
+
+function isHighValueStandaloneLearningWord(word: string) {
+  const normalized = normalizeVocabulary(word).toLowerCase();
+  if (!normalized || LOW_VALUE_STANDALONE_WORDS.has(normalized)) {
+    return false;
+  }
+
+  return isAdvancedStandaloneWord(word);
+}
+
+function pruneRedundantSentenceEntries(entries: StructuredEntry[]) {
+  const grouped = new Map<string, StructuredEntry[]>();
+  for (const entry of entries) {
+    const key = normalizeSentence(entry.sentence);
+    const current = grouped.get(key) ?? [];
+    current.push(entry);
+    grouped.set(key, current);
+  }
+
+  const pruned: StructuredEntry[] = [];
+
+  for (const [sentence, sentenceEntries] of grouped) {
+    const sortedEntries = [...sentenceEntries].sort((left, right) => {
+      const scoreDiff =
+        scoreHeuristicCandidate(right.vocabulary, sentence) -
+        scoreHeuristicCandidate(left.vocabulary, sentence);
+      if (scoreDiff !== 0) {
+        return scoreDiff;
+      }
+
+      const wordCountDiff = countWords(right.vocabulary) - countWords(left.vocabulary);
+      if (wordCountDiff !== 0) {
+        return wordCountDiff;
+      }
+
+      return right.vocabulary.length - left.vocabulary.length;
+    });
+
+    const kept: StructuredEntry[] = [];
+
+    for (const candidate of sortedEntries) {
+      const normalizedCandidate = normalizeVocabulary(candidate.vocabulary).toLowerCase();
+      const candidateWordCount = countWords(candidate.vocabulary);
+
+        const isRedundant = kept.some((existing) => {
+          const normalizedExisting = normalizeVocabulary(existing.vocabulary).toLowerCase();
+          if (!normalizedCandidate || !normalizedExisting) {
+            return false;
+          }
+
+          if (normalizedExisting === normalizedCandidate) {
+            return true;
+          }
+
+          if (shouldCollapseToLongestProperNounVariant(candidate.vocabulary, existing.vocabulary)) {
+            return true;
+          }
+
+          const overlapRatio = wordOverlapRatio(existing.vocabulary, candidate.vocabulary);
+          const containsRelationship =
+            normalizedExisting.includes(normalizedCandidate) ||
+            normalizedCandidate.includes(normalizedExisting);
+
+        if (!containsRelationship || overlapRatio < 0.8) {
+          return false;
+        }
+
+        const existingWordCount = countWords(existing.vocabulary);
+        const shorter =
+          existingWordCount <= candidateWordCount ? existing.vocabulary : candidate.vocabulary;
+        const longer =
+          existingWordCount > candidateWordCount ? existing.vocabulary : candidate.vocabulary;
+
+        if (shouldPreferStandaloneWordAlongsidePhrase(shorter, longer)) {
+          return false;
+        }
+
+        if (Math.abs(existingWordCount - candidateWordCount) >= 2) {
+          return true;
+        }
+
+        if (Math.min(existingWordCount, candidateWordCount) <= 2) {
+          return true;
+        }
+
+        return true;
+      });
+
+      if (!isRedundant) {
+        kept.push(candidate);
+      }
+    }
+
+    pruned.push(...kept);
+  }
+
+  return pruned;
 }
 
 function isPlaceholderChinese(value: string) {
@@ -1613,6 +2121,10 @@ function isValidLearningEntry(sentence: string, entry: StructuredEntry) {
     return false;
   }
 
+  if (wordCount === 1 && !looksLikeNamedEntity && !isHighValueStandaloneLearningWord(vocabulary)) {
+    return false;
+  }
+
   if (isLowQualityChineseMeaning(vocabulary, entry.chinese)) {
     return false;
   }
@@ -1634,6 +2146,10 @@ function isValidLearningEntry(sentence: string, entry: StructuredEntry) {
   }
 
   if (/^(?:one|two|three|four|five|six|seven|eight|nine|ten|many|several)\b/i.test(vocabulary)) {
+    return false;
+  }
+
+  if (isAwkwardHeuristicCandidate(vocabulary) || isNarrativeClauseFragment(vocabulary)) {
     return false;
   }
 
@@ -1852,6 +2368,10 @@ function extractHeuristicVocabularies(sentence: string) {
   for (const candidate of candidates) {
     const normalized = normalizeVocabulary(candidate).toLowerCase();
     if (!normalized) {
+      continue;
+    }
+
+    if (isAwkwardHeuristicCandidate(candidate)) {
       continue;
     }
 
@@ -2084,20 +2604,22 @@ function filterEntriesToRequestedTerms(
 }
 
 function filterAppendRequestedEntries(entries: StructuredEntry[]) {
-  return dedupeLearningEntries(
-    entries
-      .map((entry) => applyLearningEntryDefaults(entry))
-      .filter((entry) => {
-        const sentence = normalizeSentence(entry.sentence);
-        const vocabulary = normalizeVocabulary(entry.vocabulary);
-        return (
-          sentence.length > 0 &&
-          vocabulary.length > 0 &&
-          !isLowQualitySourceSentence(sentence) &&
-          sentence.toLowerCase().includes(vocabulary.toLowerCase()) &&
-          countWords(vocabulary) <= 8
-        );
-      }),
+  return pruneRedundantSentenceEntries(
+    dedupeLearningEntries(
+      entries
+        .map((entry) => applyLearningEntryDefaults(entry))
+        .filter((entry) => {
+          const sentence = normalizeSentence(entry.sentence);
+          const vocabulary = normalizeVocabulary(entry.vocabulary);
+          return (
+            sentence.length > 0 &&
+            vocabulary.length > 0 &&
+            !isLowQualitySourceSentence(sentence) &&
+            sentence.toLowerCase().includes(vocabulary.toLowerCase()) &&
+            countWords(vocabulary) <= 8
+          );
+        }),
+    ),
   );
 }
 
@@ -2141,40 +2663,47 @@ function getDesiredEntryCount(transcript: string) {
 }
 
 function filterValidEntries(entries: StructuredEntry[]) {
-  return dedupeLearningEntries(
-    entries
-      .map((entry) => applyLearningEntryDefaults(entry))
-      .filter((entry) => !isLikelyProperNounVocabulary(entry.vocabulary))
-      .filter((entry) => isValidLearningEntry(entry.sentence, entry)),
+  return pruneRedundantSentenceEntries(
+    dedupeLearningEntries(
+      entries
+        .map((entry) => applyLearningEntryDefaults(entry))
+        .filter((entry) => !isLikelyProperNounVocabulary(entry.vocabulary))
+        .filter((entry) => isValidLearningEntry(entry.sentence, entry)),
+    ),
   );
 }
 
 function filterDisplayEntries(entries: StructuredEntry[]) {
-  return dedupeLearningEntries(
-    entries
-      .map((entry) => ({
-        sentence: normalizeSentence(entry.sentence),
-        vocabulary: normalizeVocabulary(entry.vocabulary),
-        chinese: "",
-        example: "",
-        partOfSpeech: normalizeSentence(entry.partOfSpeech ?? ""),
-        sentenceChinese: normalizeSentence(entry.sentenceChinese ?? ""),
-        exampleChinese: normalizeSentence(entry.exampleChinese ?? ""),
-        difficulty: normalizeSentence(entry.difficulty ?? ""),
-        category: "learning" as const,
-        pronunciation:
-          entry.pronunciation?.trim() ||
-          `${normalizeVocabulary(entry.vocabulary)}. ${normalizeSentence(entry.sentence)}`,
-      }))
-      .filter((entry) => {
-        return (
-          entry.sentence.length > 0 &&
-          entry.vocabulary.length > 0 &&
-          !isLikelyProperNounVocabulary(entry.vocabulary) &&
-          !isLowQualitySourceSentence(entry.sentence) &&
-          entry.sentence.toLowerCase().includes(entry.vocabulary.toLowerCase())
-        );
-      }),
+  return pruneRedundantSentenceEntries(
+    dedupeLearningEntries(
+      entries
+        .map((entry) => ({
+          sentence: normalizeSentence(entry.sentence),
+          vocabulary: normalizeVocabulary(entry.vocabulary),
+          chinese: "",
+          example: "",
+          partOfSpeech: normalizeSentence(entry.partOfSpeech ?? ""),
+          sentenceChinese: normalizeSentence(entry.sentenceChinese ?? ""),
+          exampleChinese: normalizeSentence(entry.exampleChinese ?? ""),
+          difficulty: normalizeSentence(entry.difficulty ?? ""),
+          category: "learning" as const,
+          pronunciation:
+            entry.pronunciation?.trim() ||
+            `${normalizeVocabulary(entry.vocabulary)}. ${normalizeSentence(entry.sentence)}`,
+        }))
+        .filter((entry) => {
+          return (
+            entry.sentence.length > 0 &&
+            entry.vocabulary.length > 0 &&
+            !isLikelyProperNounVocabulary(entry.vocabulary) &&
+            !isLowQualitySourceSentence(entry.sentence) &&
+            entry.sentence.toLowerCase().includes(entry.vocabulary.toLowerCase()) &&
+            (countWords(entry.vocabulary) > 1 || isHighValueStandaloneLearningWord(entry.vocabulary)) &&
+            !isAwkwardHeuristicCandidate(entry.vocabulary) &&
+            !isNarrativeClauseFragment(entry.vocabulary)
+          );
+        }),
+    ),
   );
 }
 
@@ -2188,7 +2717,42 @@ function filterProperNounEntries(entries: StructuredEntry[]) {
           entry.vocabulary.length > 0 &&
           isLikelyProperNounVocabulary(entry.vocabulary) &&
           !isLowQualitySourceSentence(entry.sentence) &&
-          entry.sentence.toLowerCase().includes(entry.vocabulary.toLowerCase())
+          entry.sentence.toLowerCase().includes(entry.vocabulary.toLowerCase()) &&
+          !isNarrativeClauseFragment(entry.vocabulary)
+        );
+      }),
+  );
+}
+
+function keepDirectModelLearningEntries(entries: StructuredEntry[]) {
+  return dedupeLearningEntries(
+    entries
+      .map((entry) => applyLearningEntryDefaults(entry))
+      .filter((entry) => {
+        const sentence = normalizeSentence(entry.sentence);
+        const vocabulary = normalizeVocabulary(entry.vocabulary);
+        return (
+          sentence.length > 0 &&
+          vocabulary.length > 0 &&
+          !isLowQualitySourceSentence(sentence) &&
+          sentence.toLowerCase().includes(vocabulary.toLowerCase())
+        );
+      }),
+  );
+}
+
+function keepDirectModelProperNouns(entries: StructuredEntry[]) {
+  return dedupeLearningEntries(
+    entries
+      .map((entry) => applyProperNounEntryDefaults(entry))
+      .filter((entry) => {
+        const sentence = normalizeSentence(entry.sentence);
+        const vocabulary = normalizeVocabulary(entry.vocabulary);
+        return (
+          sentence.length > 0 &&
+          vocabulary.length > 0 &&
+          !isLowQualitySourceSentence(sentence) &&
+          sentence.toLowerCase().includes(vocabulary.toLowerCase())
         );
       }),
   );
@@ -2437,8 +3001,8 @@ async function repairEntriesWithModel(params: {
 }) {
   const repairedEntries: StructuredEntry[] = [];
 
-  for (let index = 0; index < params.entries.length; index += 6) {
-    const chunk = params.entries.slice(index, index + 6);
+  for (let index = 0; index < params.entries.length; index += 8) {
+    const chunk = params.entries.slice(index, index + 8);
     const payload = await callArkJson({
       apiKey: params.apiKey,
       baseUrl: params.baseUrl,
@@ -2482,8 +3046,70 @@ Rules:
 8. difficulty must be one CEFR-like label such as B1, B2, C1.
 9. pronunciation should be short TTS-friendly readable English text.
 10. Do not output placeholders, fragments, OCR garbage, or generic fake examples.
-11. If a phrase is understandable in context, you should still provide a direct Chinese meaning and one natural example sentence instead of leaving it blank.
-12. Return JSON only.
+11. Never leave chinese, sentenceChinese, example, or exampleChinese blank for a returned item.
+12. If a phrase is understandable in context, you should still provide a direct Chinese meaning and one natural example sentence instead of leaving it blank.
+13. Never use meta filler translations such as "原句围绕……展开", "这个例句展示了……的自然用法", or any similar template wording. Both sentenceChinese and exampleChinese must be genuine translations of the actual English sentences.
+14. If you truly cannot repair an item reliably, omit that item instead of returning empty fields.
+15. Return JSON only.
+
+Items:
+${JSON.stringify(chunk, null, 2)}
+          `.trim(),
+        },
+      ],
+    }).catch(() => ({ entries: [] as StructuredEntry[] }));
+
+    repairedEntries.push(...((payload.entries ?? []) as StructuredEntry[]));
+  }
+
+  return repairedEntries;
+}
+
+async function repairChineseMeaningsWithModel(params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  entries: StructuredEntry[];
+}) {
+  const repairedEntries: StructuredEntry[] = [];
+
+  for (const chunk of chunkArray(params.entries, 12)) {
+    const payload = await callArkJson({
+      apiKey: params.apiKey,
+      baseUrl: params.baseUrl,
+      model: params.model,
+      timeoutMs: 15000,
+      messages: [
+        {
+          role: "system",
+          content: "You are an experienced English teacher fixing missing or weak Chinese glossary meanings.",
+        },
+        {
+          role: "user",
+          content: `
+Return valid JSON only:
+{
+  "entries": [
+    {
+      "sentence": "string",
+      "vocabulary": "string",
+      "chinese": "string"
+    }
+  ]
+}
+
+Fill Chinese meanings for the following vocabulary cards.
+
+Rules:
+1. sentence must stay exactly the same as provided.
+2. vocabulary must stay exactly the same as provided.
+3. chinese must be direct, concise, natural Chinese.
+4. Do not leave chinese blank.
+5. Do not output placeholders, explanations, pinyin, or fake template text.
+6. For proper nouns, use established Chinese names when they are widely used.
+7. For phrases, translate the whole useful block instead of splitting word by word.
+8. Never use meta filler translations such as "原句围绕……展开" or "这个例句展示了……的自然用法".
+9. Return JSON only.
 
 Items:
 ${JSON.stringify(chunk, null, 2)}
@@ -2510,7 +3136,7 @@ async function fillCandidateEntriesWithModel(params: {
 
   const resolvedEntries: StructuredEntry[] = [];
 
-  for (const chunk of chunkArray(params.entries, 10)) {
+  for (const chunk of chunkArray(params.entries, 12)) {
     const payload = await callArkJson({
       apiKey: params.apiKey,
       baseUrl: params.baseUrl,
@@ -2554,9 +3180,10 @@ Rules:
 8. difficulty must be one CEFR-like label such as B1, B2, C1.
 9. pronunciation should be short TTS-friendly readable English text.
 10. These entries are for learning vocabulary, so prefer common high-value words, phrases, collocations, and phrasal verbs over proper nouns.
-11. If an item is not reliable enough, keep chinese and example empty instead of guessing.
-12. Do not shorten a phrase if the sentence clearly contains a fuller useful block such as "life in prison without parole".
-13. Return JSON only.
+11. Do not output narrative sentence fragments such as "Hipper told", "drones fell", "Local media reported", "officials said", or "people were injured" as vocabulary items.
+12. If a candidate is not reliable enough, omit that item instead of returning blank chinese or blank example fields.
+13. Do not shorten a phrase if the sentence clearly contains a fuller useful block such as "life in prison without parole".
+14. Return JSON only.
 
 Candidates:
 ${JSON.stringify(chunk, null, 2)}
@@ -2672,6 +3299,104 @@ function buildDeterministicTranscriptFallbackEntries(params: {
   return entries.slice(0, resolvedLimit);
 }
 
+function buildProperNounFallbackEntries(params: {
+  transcript: string;
+  existingEntries?: RecognitionEntry[];
+  currentEntries?: StructuredEntry[];
+  limit?: number;
+}) {
+  const sentences = Array.from(new Set(splitTranscriptSentences(params.transcript)));
+  const existingVocabulary = new Set(
+    (params.existingEntries ?? []).map((entry) => normalizeVocabulary(entry.vocabulary).toLowerCase()),
+  );
+  const existingEntryKeys = new Set(
+    (params.currentEntries ?? []).map(
+      (entry) =>
+        `${normalizeSentence(entry.sentence)}__${normalizeVocabulary(entry.vocabulary).toLowerCase()}`,
+    ),
+  );
+  const candidates: StructuredEntry[] = [];
+  const resolvedLimit = params.limit ?? 24;
+
+  for (const sentence of sentences) {
+    const vocabularies = extractHeuristicVocabularies(sentence)
+      .filter((candidate) => isLikelyProperNounVocabulary(candidate))
+      .slice(0, 4);
+
+    for (const vocabulary of vocabularies) {
+      const normalizedVocabulary = normalizeVocabulary(vocabulary).toLowerCase();
+      const key = `${normalizeSentence(sentence)}__${normalizedVocabulary}`;
+      if (!normalizedVocabulary || existingVocabulary.has(normalizedVocabulary) || existingEntryKeys.has(key)) {
+        continue;
+      }
+
+      existingEntryKeys.add(key);
+      candidates.push({
+        sentence,
+        vocabulary: normalizeVocabulary(vocabulary),
+        chinese: lookupHeuristicChinese(vocabulary),
+        example: createHeuristicExample(vocabulary),
+        partOfSpeech: "proper noun",
+        sentenceChinese: "",
+        exampleChinese: "",
+        difficulty: "B2",
+        category: "proper-noun",
+        pronunciation: `${normalizeVocabulary(vocabulary)}. ${sentence}`,
+      });
+
+      if (candidates.length >= resolvedLimit) {
+        return filterProperNounEntries(candidates);
+      }
+    }
+  }
+
+  return filterProperNounEntries(candidates);
+}
+
+function buildSentenceCoverageFallbackEntries(params: {
+  transcript: string;
+  currentEntries?: StructuredEntry[];
+}) {
+  const sentences = Array.from(new Set(splitTranscriptSentences(params.transcript)));
+  const coveredSentenceKeys = new Set(
+    (params.currentEntries ?? []).map((entry) => normalizeSentence(entry.sentence)),
+  );
+  const fallbackEntries: StructuredEntry[] = [];
+
+  for (const sentence of sentences) {
+    if (coveredSentenceKeys.has(normalizeSentence(sentence))) {
+      continue;
+    }
+
+    const vocabularies = extractHeuristicVocabularies(sentence);
+    const preferredVocabulary =
+      vocabularies.find((candidate) => !isLikelyProperNounVocabulary(candidate)) ||
+      vocabularies.find((candidate) => isLikelyProperNounVocabulary(candidate)) ||
+      vocabularies[0] ||
+      pickVocabulary(sentence);
+    const vocabulary = normalizeVocabulary(preferredVocabulary);
+
+    if (!vocabulary) {
+      continue;
+    }
+
+    fallbackEntries.push({
+      sentence,
+      vocabulary,
+      chinese: lookupHeuristicChinese(vocabulary),
+      example: createHeuristicExample(vocabulary),
+      partOfSpeech: isLikelyProperNounVocabulary(vocabulary) ? "proper noun" : "phrase",
+      sentenceChinese: "",
+      exampleChinese: "",
+      difficulty: "B2",
+      category: "learning",
+      pronunciation: `${vocabulary}. ${sentence}`,
+    });
+  }
+
+  return dedupeLearningEntries(fallbackEntries);
+}
+
 function mergePreferredEntries(primaryEntries: StructuredEntry[], supplementalEntries: StructuredEntry[]) {
   const merged = new Map<string, StructuredEntry>();
 
@@ -2703,18 +3428,40 @@ function fillEntriesWithHeuristicFallback(entries: StructuredEntry[]) {
 function ensureDisplayableEntryDetails(entries: StructuredEntry[]) {
   return entries.map((entry) => {
     const vocabulary = normalizeVocabulary(entry.vocabulary);
-    const fallbackChinese = repairChineseMeaning(vocabulary, entry.chinese) || composeHeuristicChinese(vocabulary);
+    const repairedChinese = repairChineseMeaning(vocabulary, entry.chinese);
+    const normalizedPartOfSpeech = normalizeSentence(entry.partOfSpeech ?? "").toLowerCase();
+    const genericChineseFallback = normalizedPartOfSpeech.includes("proper")
+      ? "专有名词"
+      : normalizedPartOfSpeech.includes("verb")
+        ? "动词表达"
+        : normalizedPartOfSpeech.includes("noun")
+          ? "名词性表达"
+          : normalizedPartOfSpeech.includes("adjective")
+            ? "形容词表达"
+            : normalizedPartOfSpeech.includes("adverb")
+              ? "副词表达"
+              : "固定表达";
+    const fallbackChinese =
+      repairedChinese ||
+      lookupHeuristicChinese(vocabulary) ||
+      composeHeuristicChinese(vocabulary) ||
+      normalizeVocabulary(entry.chinese) ||
+      genericChineseFallback;
     const fallbackExample =
       normalizeSentence(entry.example) ||
       createHeuristicExample(vocabulary) ||
       createHeuristicSecondaryExample(vocabulary) ||
       `${vocabulary} is a useful expression in the article.`;
+    const fallbackSentenceChinese = normalizeSentence(entry.sentenceChinese ?? "");
+    const fallbackExampleChinese = normalizeSentence(entry.exampleChinese ?? "");
 
     return applyLearningEntryDefaults({
       ...entry,
       vocabulary,
       chinese: fallbackChinese,
       example: fallbackExample,
+      sentenceChinese: fallbackSentenceChinese,
+      exampleChinese: fallbackExampleChinese,
       pronunciation:
         entry.pronunciation?.trim() || `${vocabulary}. ${normalizeSentence(entry.sentence)}. ${fallbackExample}`,
     });
@@ -2828,7 +3575,7 @@ async function callArkContent(params: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${params.apiKey}`,
     },
-    signal: AbortSignal.timeout(params.timeoutMs ?? 45000),
+    signal: AbortSignal.timeout(params.timeoutMs ?? 110000),
     body: JSON.stringify({
       model: params.model,
       temperature: 0.2,
@@ -2880,7 +3627,7 @@ async function extractTextFromImageWithModel(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: 28000,
+    timeoutMs: 90000,
     messages: [
       {
         role: "system",
@@ -3012,7 +3759,7 @@ async function analyzeImageWithModel(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: 16000,
+    timeoutMs: 110000,
     messages: [
       {
         role: "system",
@@ -3056,31 +3803,16 @@ Read the image and return valid JSON only:
 }
 
 Rules:
-1. Keep only useful English learning content visible in the image.
-2. Ignore icons, logos, timestamps, decorative UI, page chrome, watermarks, and garbage fragments.
-3. cleanedText must restore all readable original English sentences from top to bottom, including the lower half of a long screenshot.
-4. sentence must be a complete meaningful original sentence from the image text.
-5. Do not drop the later sentences in a long image, and do not repeat sentence fragments.
-6. Every entry sentence must appear verbatim inside cleanedText.
-7. Put common high-value words and phrases into learningEntries.
-8. Put person names, place names, institutions, official titles, organizations, and geopolitical regions into properNouns.
-9. chinese must be concise Chinese meaning.
-10. partOfSpeech must be accurate.
-11. sentenceChinese must be a natural Chinese translation of the original sentence.
-12. example must be one new natural English example sentence.
-13. exampleChinese must be a natural Chinese translation of the example.
-14. difficulty must be one CEFR-like label such as B1, B2, C1.
-15. pronunciation must be a short TTS-friendly English text.
-16. Extract as many qualified words and phrases as possible across every sentence.
-17. Prefer 3 to 6 strong learning items from each information-rich sentence whenever they truly exist.
-18. If the image already looks like vocabulary cards or notes, preserve the visible meaning and examples accurately.
-19. If the user explicitly requests certain words or phrases, prioritize those requested items first.
-20. Return JSON only.
-21. Think in sentence chunks, not only single words: prefer chunks such as "co-founder", "testifies", "House committee", "be under pressure", "in response to", "life in prison without parole" when they are present and useful.
-22. Avoid over-selecting very basic words such as I, we, is, are, often, very, good, bad, big, small.
+1. Return JSON only. Do not wrap in markdown.
+2. cleanedText must restore the readable original English text from top to bottom.
+3. Each entry.sentence must be a complete original sentence from the image.
+4. Each entry.vocabulary must appear verbatim inside its sentence.
+5. Fill chinese, partOfSpeech, sentenceChinese, example, exampleChinese, difficulty, and pronunciation for every returned item.
+6. Put ordinary learning vocabulary in learningEntries.
+7. Put person names, place names, institutions, titles, organizations, and other named entities in properNouns.
 
 User instructions:
-${params.instructions || "你现在是一位经验丰富、讲解细致的英文老师。请按照课堂讲解的标准，逐句深入分析原文，从每句话中尽可能多提取中国高中英语水平以上的高质量单词、固定搭配、短语动词、名词短语、新闻常用表达，以及值得了解的人名、地名、机构名、头衔和其他专有名词。不要只给每个长句提取 1 个词，要尽量分块提取有学习价值的表达；同时舍弃 I、we、is、are、often、very 这类过于基础或学习价值低的词。每个词条都要给出准确中文意思、原句翻译、自然例句、例句翻译和发音。"}
+${params.instructions || "你是一位经验丰富的高中/大学英语老师。请对我输入的英文原文逐句做课堂式精讲，重点不是简单翻译，而是帮助中国学习者理解长难句、新闻表达和高质量词块。请先在脑中找每句的主干，再拆修饰成分、定语、状语、从句、插入语、介词短语和非谓语结构，然后从每句话中尽可能多提取值得老师上课讲的高质量词条，包括高中英语及以上单词、固定搭配、短语动词、完整名词短语、新闻常用表达，以及人名、地名、机构名、国家名、组织名、头衔、事件名等专有名词。请优先保留完整表达，不要切成碎片，不要重复提取，不要输出半截词块。每个长句都应尽量提取多个高质量词条，而不是只给 1 个。每个词条都要给出准确中文意思、发音、词性或类型、原句翻译、自然英文例句和例句中文翻译。"}
 
 Existing entries to avoid duplicating:
 ${existingVocabulary || "none"}
@@ -3153,7 +3885,7 @@ async function structureTranscript(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: 14000,
+    timeoutMs: 110000,
     messages: [
       {
         role: "system",
@@ -3194,29 +3926,14 @@ Analyze the following English material and return valid JSON only:
 }
 
 Rules:
-1. Keep only useful English learning content.
-2. sentence must be a complete meaningful original sentence from the provided text.
-3. Put common high-value learning vocabulary into learningEntries: verbs, adjectives, adverbs, nouns, collocations, fixed phrases, and phrasal verbs.
-4. Do not let proper nouns crowd out learning vocabulary.
-5. Put person names, place names, institutions, organizations, official titles, geopolitical regions, products, and other named entities into properNouns.
-6. learningEntries should usually contain 30 to 80 items when the article is rich enough.
-7. properNouns should usually contain 5 to 20 items when available.
-8. vocabulary must appear verbatim inside sentence.
-9. chinese must be concise Chinese meaning.
-10. partOfSpeech must be an accurate label such as verb, noun, adjective, adverb, phrase, phrasal verb, noun phrase, proper noun.
-11. sentenceChinese must be a natural Chinese translation of the original sentence.
-12. example must be one new natural English example sentence.
-13. exampleChinese must be a natural Chinese translation of the example.
-14. difficulty must be one CEFR-like label such as B1, B2, C1.
-15. pronunciation must be a short TTS-friendly English text for reading aloud.
-16. If appendOnly is true, only return NEW items that do not duplicate the existing list.
-17. Keep the result accurate and do not invent original sentences.
-18. Cover as many sentences as possible instead of returning only one item from the whole passage.
-19. If the user explicitly requests certain words or phrases, prioritize those requested items first, then supplement with other strong candidates from the same sentence.
-20. Think in sentence chunks: extract meaningful blocks like "co-founder", "testifies", "House committee", "launch an inquiry", "under mounting pressure", "life in prison without parole" when present.
-21. Avoid very basic vocabulary such as I, we, is, are, often, very, good, bad, big, small unless they are part of a useful fixed phrase.
-22. Do not truncate a phrase early. If the full useful phrase in the sentence is "life in prison without parole", do not shorten it to "life in prison without".
-23. If a sentence is information-rich, extract several useful blocks from it instead of stopping after the first acceptable item.
+1. Return JSON only. Do not wrap in markdown.
+2. cleanedText should be the cleaned original text.
+3. sentence must be a complete original sentence from the provided text.
+4. vocabulary must appear verbatim inside sentence.
+5. Fill chinese, partOfSpeech, sentenceChinese, example, exampleChinese, difficulty, and pronunciation for every returned item.
+6. Put ordinary learning vocabulary in learningEntries.
+7. Put person names, place names, institutions, titles, organizations, and other named entities in properNouns.
+8. If appendOnly is true, only return NEW items that do not duplicate the existing list.
 
 Text:
 ${params.transcript}
@@ -3225,7 +3942,7 @@ appendOnly:
 ${params.appendOnly ? "true" : "false"}
 
 User instructions:
-${params.instructions || "你现在是一位经验丰富、讲解细致的英文老师。请按照课堂讲解的标准，逐句深入分析原文，从每句话中尽可能多提取中国高中英语水平以上的高质量单词、固定搭配、短语动词、名词短语、新闻常用表达，以及值得了解的人名、地名、机构名、头衔和其他专有名词。不要只给每个长句提取 1 个词，要尽量分块提取有学习价值的表达；同时舍弃 I、we、is、are、often、very 这类过于基础或学习价值低的词。每个词条都要给出准确中文意思、原句翻译、自然例句、例句翻译和发音。"}
+${params.instructions || "你是一位经验丰富的高中/大学英语老师。请对英文原文逐句做课堂式精讲，先在脑中看句子主干，再看修饰成分、定语、状语、从句、插入语、介词短语和非谓语结构，然后提取真正值得老师讲解的高质量词条。请从每句话中尽可能多提取高中英语及以上单词、固定搭配、短语动词、完整名词短语、新闻常用表达，以及人名、地名、机构名、国家名、组织名、头衔、事件名等专有名词。优先保留完整表达，不要机械切词，不要重复提取，不要输出半截词块。每个长句要尽量提取多个高质量词条。每个词条都要给出准确中文意思、发音、词性或类型、原句翻译、自然英文例句和例句中文翻译。"}
 
 Existing entries to avoid duplicating:
 ${existingVocabulary || "none"}
@@ -3397,6 +4114,7 @@ async function enrichEntriesForImageTranscript(params: {
   const transcript = cleanTranscript(params.transcript);
   const desiredEntryCount = getDesiredEntryCount(transcript);
   const sentenceCount = splitTranscriptSentences(transcript).length;
+  const desiredProperNounCount = Math.min(Math.max(Math.ceil(sentenceCount * 1.5), 6), 24);
   let entries = filterDisplayEntries(params.seedEntries ?? []);
   let properNouns: StructuredEntry[] = [];
 
@@ -3404,7 +4122,7 @@ async function enrichEntriesForImageTranscript(params: {
     return { entries, properNouns };
   }
 
-  const expectedCoverage = Math.min(Math.max(sentenceCount - 1, 1), 8);
+  const expectedCoverage = sentenceCount;
   const needsMoreEntries =
     entries.length < Math.max(Math.ceil(desiredEntryCount * 0.6), 8) ||
     countCoveredSentences(entries) < expectedCoverage;
@@ -3477,32 +4195,79 @@ async function enrichEntriesForImageTranscript(params: {
     );
   }
 
+  const resolvedEntryLimit = Math.min(Math.max(desiredEntryCount, 24), 72);
   const resolvedEntries = await enrichDisplayEntriesWithModel({
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    entries: entries.slice(0, Math.min(Math.max(desiredEntryCount, 24), 48)),
+    entries: entries.slice(0, resolvedEntryLimit),
   }).catch(() => [] as StructuredEntry[]);
 
   const finalizedLearningEntries = fillEntriesWithHeuristicFallback(
     mergePreferredEntries(
       resolvedEntries,
-      entries.slice(0, Math.min(Math.max(desiredEntryCount, 24), 48)),
+      entries.slice(0, resolvedEntryLimit),
     ),
   );
 
-  if (properNouns.length === 0) {
-    properNouns = await extractProperNounEntriesFromTranscript({
+  let boostedLearningEntries: StructuredEntry[] = finalizedLearningEntries;
+  const needsModelBoost =
+    boostedLearningEntries.length < Math.max(Math.ceil(desiredEntryCount * 0.6), 10) ||
+    countCoveredSentences(boostedLearningEntries) < Math.max(2, Math.floor(expectedCoverage * 0.7));
+
+  if (needsModelBoost) {
+    const boostedStructured = await structureTranscript({
+      apiKey: params.apiKey,
+      baseUrl: params.baseUrl,
+      model: params.model,
+      transcript,
+      instructions: `${params.instructions ?? ""}\n请不要因为担心错误而过早停止抽取。请继续逐句检查全文，优先补充每个句子里完整、自然、值得老师讲解的单词、固定搭配、短语动词、名词短语和专有名词。严禁输出 officials said、Local media reported、people were injured 这类主语+谓语叙述片段。`,
+      existingEntries: params.existingEntries,
+      appendOnly: false,
+    }).catch(() => ({ learningEntries: [] as StructuredEntry[], properNouns: [] as StructuredEntry[] }));
+
+    boostedLearningEntries = filterValidEntries(
+      mergePreferredEntries(
+        [
+          ...boostedLearningEntries,
+          ...getLearningEntriesFromStructuredPayload(boostedStructured),
+        ],
+        boostedLearningEntries,
+      ),
+    );
+
+    properNouns = filterProperNounEntries([
+      ...properNouns,
+      ...getProperNounsFromStructuredPayload(boostedStructured),
+    ]);
+  }
+
+  if (properNouns.length < desiredProperNounCount) {
+    const extractedProperNouns = await extractProperNounEntriesFromTranscript({
       apiKey: params.apiKey,
       baseUrl: params.baseUrl,
       model: params.model,
       transcript,
       existingEntries: params.existingEntries,
     }).catch(() => [] as StructuredEntry[]);
+
+    properNouns = filterProperNounEntries([...properNouns, ...extractedProperNouns]);
+  }
+
+  if (properNouns.length < desiredProperNounCount) {
+    properNouns = filterProperNounEntries([
+      ...properNouns,
+      ...buildProperNounFallbackEntries({
+        transcript,
+        existingEntries: params.existingEntries,
+        currentEntries: properNouns,
+        limit: desiredProperNounCount,
+      }),
+    ]);
   }
 
   return {
-    entries: sortEntriesByTranscriptOrder(transcript, finalizedLearningEntries),
+    entries: sortEntriesByTranscriptOrder(transcript, boostedLearningEntries),
     properNouns: properNouns.slice(0, 20),
   };
 }
@@ -3621,7 +4386,91 @@ async function analyzeImageFilesDirectly(params: {
   preferOcrFirst?: boolean;
   preferVision?: boolean;
   imageMetadata?: ImageUploadMetadata[];
+  fastMode?: boolean;
+  directJsonMode?: boolean;
 }) {
+  if (params.directJsonMode) {
+    const results = await Promise.all(
+      params.files.map(async (file, index) => {
+        const bytes = await file.arrayBuffer();
+        const buffer = Buffer.from(bytes);
+        const payload = await analyzeImageWithModel({
+          apiKey: params.apiKey,
+          baseUrl: params.baseUrl,
+          model: params.model,
+          buffer,
+          fileType: file.type,
+          instructions: params.instructions,
+          existingEntries: [],
+        });
+
+        const transcript = cleanTranscript(payload.cleanedText ?? "");
+        const entries = dedupeLearningEntries(
+          getLearningEntriesFromStructuredPayload(payload as TranscriptStructuredPayload).map((entry) =>
+            applyLearningEntryDefaults(entry),
+          ),
+        );
+        const properNouns = dedupeLearningEntries(
+          getProperNounsFromStructuredPayload(payload as TranscriptStructuredPayload).map((entry) =>
+            applyProperNounEntryDefaults(entry),
+          ),
+        );
+
+        return {
+          transcript,
+          entries,
+          properNouns,
+          method: "vision" as const,
+          diagnostics: {
+            fileName: file.name,
+            image: params.imageMetadata?.[index] ?? null,
+            ocr: null,
+            visionDefault: buildStageDiagnostics(payload.cleanedText ?? "", transcript),
+            visionExhaustive: null,
+            mergedTranscript: buildStageDiagnostics(transcript, transcript),
+            extractionMethod: "vision" as const,
+          },
+        };
+      }),
+    );
+
+    const mergedTranscript = cleanTranscript(
+      results
+        .map((item) => item.transcript)
+        .filter(Boolean)
+        .join("\n\n"),
+    );
+    const entries = sortEntriesByTranscriptOrder(
+      mergedTranscript,
+      dedupeLearningEntries(results.flatMap((item) => item.entries)),
+    );
+    const properNouns = dedupeLearningEntries(results.flatMap((item) => item.properNouns));
+    const allDisplayEntries = [...entries, ...properNouns];
+
+    return {
+      rawText: mergedTranscript,
+      cleanedText: mergedTranscript,
+      entries,
+      properNouns,
+      method: "vision" as const,
+      diagnostics: {
+        imageCount: params.files.length,
+        images: params.imageMetadata ?? [],
+        files: results.map((item) => item.diagnostics),
+        ocrTextLength: mergedTranscript.length,
+        ocrTextLines: countTranscriptLines(mergedTranscript),
+        ocrSentenceCount: splitTranscriptSentences(mergedTranscript).length,
+        aiInputLength: mergedTranscript.length,
+        aiInputSentenceCount: splitTranscriptSentences(mergedTranscript).length,
+        aiSeedEntryCount: 0,
+        aiOutputCount: allDisplayEntries.length,
+        finalDisplayCount: allDisplayEntries.length,
+        ...summarizeSentenceCoverage(mergedTranscript, allDisplayEntries),
+        method: "vision" as const,
+      },
+    };
+  }
+
   const shouldPreferVision = true;
 
   const fallbackToOcrTranscript = async () => {
@@ -3766,9 +4615,11 @@ async function analyzeImageFilesDirectly(params: {
           return {
             transcript: mergedTranscript,
             entries:
-              directEntries.length > 0
-                ? filterValidEntries([...directEntries, ...fallbackEntries])
-                : fallbackEntries,
+              params.fastMode
+                ? filterValidEntries(directEntries)
+                : directEntries.length > 0
+                  ? filterValidEntries([...directEntries, ...fallbackEntries])
+                  : fallbackEntries,
             properNouns: directProperNouns,
             method: "vision" as const,
             diagnostics: {
@@ -3820,25 +4671,35 @@ async function analyzeImageFilesDirectly(params: {
         .join("\n\n") || mergedTranscriptFromEntries,
     );
     const seedEntries = mergedTranscript
-      ? filterDisplayEntries([
-          ...validResults.flatMap((item) => item.entries),
-          ...buildRawTranscriptCandidateEntries({
-            transcript: mergedTranscript,
-            existingEntries: params.existingEntries,
-            limit: Math.min(getDesiredEntryCount(mergedTranscript), 32),
-          }),
-        ])
+      ? params.fastMode
+        ? dedupeLearningEntries(filterDisplayEntries(validResults.flatMap((item) => item.entries)))
+        : filterDisplayEntries([
+            ...validResults.flatMap((item) => item.entries),
+            ...buildRawTranscriptCandidateEntries({
+              transcript: mergedTranscript,
+              existingEntries: params.existingEntries,
+              limit: Math.min(getDesiredEntryCount(mergedTranscript), 32),
+            }),
+          ])
       : [];
     const enriched = mergedTranscript
-      ? await enrichEntriesForImageTranscript({
-          apiKey: params.apiKey,
-          baseUrl: params.baseUrl,
-          model: params.model,
-          transcript: mergedTranscript,
-          instructions: params.instructions,
-          existingEntries: params.existingEntries,
-          seedEntries,
-        })
+      ? params.fastMode
+        ? {
+            entries: sortEntriesByTranscriptOrder(
+              mergedTranscript,
+              dedupeLearningEntries(seedEntries),
+            ),
+            properNouns: filterProperNounEntries(validResults.flatMap((item) => item.properNouns)),
+          }
+        : await enrichEntriesForImageTranscript({
+            apiKey: params.apiKey,
+            baseUrl: params.baseUrl,
+            model: params.model,
+            transcript: mergedTranscript,
+            instructions: params.instructions,
+            existingEntries: params.existingEntries,
+            seedEntries,
+          })
       : {
           entries: filterDisplayEntries(validResults.flatMap((item) => item.entries)),
           properNouns: filterProperNounEntries(validResults.flatMap((item) => item.properNouns)),
@@ -4053,11 +4914,15 @@ async function analyzeImageFilesDirectly(params: {
           structuredProperNouns = filterProperNounEntries(getProperNounsFromStructuredPayload(structured));
 
           const desiredEntryCount = getDesiredEntryCount(transcript);
+          const desiredProperNounCount = Math.min(
+            Math.max(Math.ceil(splitTranscriptSentences(transcript).length * 1.5), 6),
+            24,
+          );
           const coveredSentences = countCoveredSentences(structuredEntries);
           const sentenceCount = splitTranscriptSentences(transcript).length;
           if (
             structuredEntries.length < desiredEntryCount ||
-            coveredSentences < Math.min(Math.max(sentenceCount - 1, 1), 8)
+            coveredSentences < sentenceCount
           ) {
             const supplementalEntries = await supplementEntriesFromTranscript({
               apiKey: params.apiKey,
@@ -4069,6 +4934,18 @@ async function analyzeImageFilesDirectly(params: {
               limit: Math.max(desiredEntryCount - structuredEntries.length, 10),
             });
             structuredEntries = filterValidEntries([...structuredEntries, ...supplementalEntries]);
+          }
+
+          if (structuredProperNouns.length < desiredProperNounCount) {
+            structuredProperNouns = filterProperNounEntries([
+              ...structuredProperNouns,
+              ...buildProperNounFallbackEntries({
+                transcript,
+                existingEntries: params.existingEntries,
+                currentEntries: structuredProperNouns,
+                limit: desiredProperNounCount,
+              }),
+            ]);
           }
         }
 
@@ -4136,7 +5013,10 @@ export async function POST(request: Request) {
   const localHeuristic = String(formData.get("localHeuristic") || "") === "1";
   const ocrFirst = String(formData.get("ocrFirst") || "") === "1";
   const preferVision = String(formData.get("preferVision") || "") === "1";
+  const fastMode = String(formData.get("fastMode") || "") === "1";
+  const directJsonMode = String(formData.get("directJsonMode") || "") === "1";
   const directTermMode = String(formData.get("directTermMode") || "") === "1";
+  const stage2Enrich = String(formData.get("stage2Enrich") || "") === "1";
   const sourceFileName = String(formData.get("sourceFileName") || "").trim();
   const requestedTermsRaw = String(formData.get("requestedTerms") || "[]");
   const existingEntriesRaw = String(formData.get("existingEntries") || "[]");
@@ -4241,7 +5121,24 @@ export async function POST(request: Request) {
       method: "vision",
     };
 
-    if (directTermMode && requestedTerms.length > 0) {
+    if (stage2Enrich && existingEntries.length > 0) {
+      const stagedEntries = (existingEntries as StructuredEntry[]).map((entry) =>
+        sanitizeStructuredEntry(entry),
+      );
+      transcript = cleanTranscript(
+        existingRawText ||
+          stagedEntries.map((entry) => normalizeSentence(entry.sentence)).join("\n\n"),
+      );
+      cleanedText = transcript;
+      entries = stagedEntries
+        .filter((entry) => (entry.category ?? "learning") !== "proper-noun")
+        .map((entry) => applyLearningEntryDefaults(entry));
+      properNouns = stagedEntries
+        .filter((entry) => entry.category === "proper-noun")
+        .map((entry) => applyProperNounEntryDefaults(entry));
+      mode = "vision-fallback";
+      ocrMethod = "vision";
+    } else if (directTermMode && requestedTerms.length > 0) {
       const directEntries = await generateEntriesForRequestedTermsDirect({
         apiKey,
         baseUrl,
@@ -4265,24 +5162,31 @@ export async function POST(request: Request) {
         preferOcrFirst: ocrFirst || !preferVision,
         preferVision,
         imageMetadata,
+        fastMode,
+        directJsonMode,
       });
       transcript = analysis.rawText;
       cleanedText = analysis.rawText;
-      const repairedAnalysisEntries = await ensureHighQualityEntries({
-        apiKey,
-        baseUrl,
-        model: visionModel,
-        entries: analysis.entries,
-        allowRepair: true,
-        repairLimit: 18,
-      });
-      entries = sortEntriesByTranscriptOrder(
-        analysis.rawText,
-        fillEntriesWithHeuristicFallback(
-          mergePreferredEntries(repairedAnalysisEntries, analysis.entries),
-        ),
-      );
-      properNouns = filterProperNounEntries(analysis.properNouns ?? []);
+      entries = directJsonMode
+        ? sortEntriesByTranscriptOrder(
+            analysis.rawText,
+            dedupeLearningEntries(
+              (analysis.entries ?? []).map((entry) => applyLearningEntryDefaults(entry)),
+            ),
+          )
+        : sortEntriesByTranscriptOrder(
+            analysis.rawText,
+            dedupeLearningEntries(
+              filterDisplayEntries(
+                analysis.entries,
+              ),
+            ),
+          );
+      properNouns = directJsonMode
+        ? dedupeLearningEntries(
+            (analysis.properNouns ?? []).map((entry) => applyProperNounEntryDefaults(entry)),
+          )
+        : filterProperNounEntries(analysis.properNouns ?? []);
       ocrMethod = analysis.method;
       diagnostics = analysis.diagnostics;
       fileName =
@@ -4405,7 +5309,7 @@ export async function POST(request: Request) {
       }
     }
 
-    if (files.length === 0 && entries.length === 0 && !isAppendRequest) {
+    if (files.length === 0 && entries.length === 0 && !isAppendRequest && !stage2Enrich) {
       try {
         const enrichedTranscriptResult = await enrichEntriesForImageTranscript({
           apiKey,
@@ -4439,7 +5343,7 @@ export async function POST(request: Request) {
       }
     }
 
-    if (entries.length === 0 && !isAppendRequest) {
+    if (entries.length === 0 && !isAppendRequest && !stage2Enrich && !directJsonMode) {
       const fallbackEntries = createFallbackEntries(transcript);
       properNouns = filterProperNounEntries([...properNouns, ...fallbackEntries]);
       properNouns = await enrichProperNounEntriesWithModel({
@@ -4481,7 +5385,7 @@ export async function POST(request: Request) {
       mode = "vision-fallback";
     }
 
-    if (entries.length === 0 && properNouns.length > 0 && !isAppendRequest) {
+    if (entries.length === 0 && properNouns.length > 0 && !isAppendRequest && !stage2Enrich && !directJsonMode) {
       const forcedLearningEntries = buildRawTranscriptCandidateEntries({
         transcript,
         existingEntries,
@@ -4501,7 +5405,7 @@ export async function POST(request: Request) {
           : filterDisplayEntries(forcedLearningEntries);
     }
 
-    if (entries.length > 0 && files.length === 0 && !ocrFirst && !localHeuristic && !isAppendRequest) {
+    if (entries.length > 0 && files.length === 0 && !ocrFirst && !localHeuristic && !isAppendRequest && !stage2Enrich && !directJsonMode) {
       entries = await ensureHighQualityEntries({
         apiKey,
         baseUrl,
@@ -4512,7 +5416,7 @@ export async function POST(request: Request) {
       });
     }
 
-    if (properNouns.length > 0 && !isAppendRequest) {
+    if (properNouns.length > 0 && !isAppendRequest && files.length === 0 && !directJsonMode) {
       properNouns = await enrichProperNounEntriesWithModel({
         apiKey,
         baseUrl,
@@ -4521,7 +5425,7 @@ export async function POST(request: Request) {
       }).catch(() => properNouns);
     }
 
-    if (entries.length > 0) {
+    if (entries.length > 0 && !directJsonMode) {
       const incompleteLearningEntries = entries.filter(
         (entry) =>
           isLowQualityChineseMeaning(entry.vocabulary, entry.chinese) ||
@@ -4536,28 +5440,113 @@ export async function POST(request: Request) {
           apiKey,
           baseUrl,
           model: apiModel,
-          entries: incompleteLearningEntries.slice(0, 48),
+          entries: incompleteLearningEntries,
         }).catch(() => [] as StructuredEntry[]);
 
         if (repairedLearningEntries.length > 0) {
-          entries = fillEntriesWithHeuristicFallback(
-            mergePreferredEntries(repairedLearningEntries, entries),
-          );
+          entries = stage2Enrich
+            ? dedupeLearningEntries(mergePreferredEntries(repairedLearningEntries, entries))
+            : filterDisplayEntries(
+                mergePreferredEntries(repairedLearningEntries, entries),
+              );
         }
       }
     }
 
-    const mergedDisplayEntries = sortEntriesByTranscriptOrder(
-      rawText,
-      ensureDisplayableEntryDetails(
-        dedupeLearningEntries([
+    const combinedEntriesBeforeDisplay = directJsonMode
+      ? sortEntriesByTranscriptOrder(
+          rawText,
+          dedupeLearningEntries([
+            ...entries,
+            ...properNouns.map((entry) => ({
+              ...entry,
+              category: "learning" as const,
+            })),
+          ]),
+        )
+      : dedupeLearningEntries([
           ...entries,
           ...properNouns.map((entry) => ({
             ...entry,
             category: "learning" as const,
           })),
-        ]),
-      ),
+        ]);
+
+    const shouldAddSentenceCoverageFallback =
+      !stage2Enrich &&
+      !directJsonMode &&
+      files.length === 0 &&
+      (
+        combinedEntriesBeforeDisplay.length <
+          Math.max(Math.ceil(splitTranscriptSentences(rawText).length * 2), 8) ||
+        countCoveredSentences(combinedEntriesBeforeDisplay) <
+          Math.max(2, Math.floor(splitTranscriptSentences(rawText).length * 0.6))
+      );
+
+    const sentenceCoverageFallbackEntries = shouldAddSentenceCoverageFallback
+      ? buildSentenceCoverageFallbackEntries({
+          transcript: rawText,
+          currentEntries: combinedEntriesBeforeDisplay,
+        })
+      : [];
+
+    const combinedEntriesWithCoverage = dedupeLearningEntries([
+      ...combinedEntriesBeforeDisplay,
+      ...sentenceCoverageFallbackEntries,
+    ]);
+
+    const displayEntriesNeedingRepair = combinedEntriesWithCoverage.filter(
+      (entry) =>
+        isLowQualityChineseMeaning(entry.vocabulary, entry.chinese) ||
+        sharedIsLowQualityExample(entry.sentence, entry.example) ||
+        !(entry.sentenceChinese ?? "").trim() ||
+        !(entry.exampleChinese ?? "").trim() ||
+        !(entry.partOfSpeech ?? "").trim(),
+    );
+
+    let repairedDisplayEntries = combinedEntriesWithCoverage;
+    if (displayEntriesNeedingRepair.length > 0 && !directJsonMode) {
+      const finalRepairedEntries = await repairEntriesWithModel({
+        apiKey,
+        baseUrl,
+        model: apiModel,
+        entries: displayEntriesNeedingRepair,
+      }).catch(() => [] as StructuredEntry[]);
+
+      if (finalRepairedEntries.length > 0) {
+        repairedDisplayEntries = mergePreferredEntries(
+          finalRepairedEntries,
+          combinedEntriesWithCoverage,
+        );
+      }
+    }
+
+    const entriesNeedingChineseMeaning = repairedDisplayEntries.filter((entry) =>
+      isLowQualityChineseMeaning(entry.vocabulary, entry.chinese),
+    );
+
+    let combinedEntriesForDisplay = repairedDisplayEntries;
+    if (entriesNeedingChineseMeaning.length > 0 && !directJsonMode) {
+      const repairedChineseEntries = await repairChineseMeaningsWithModel({
+        apiKey,
+        baseUrl,
+        model: apiModel,
+        entries: entriesNeedingChineseMeaning,
+      }).catch(() => [] as StructuredEntry[]);
+
+      if (repairedChineseEntries.length > 0) {
+        combinedEntriesForDisplay = mergePreferredEntries(
+          repairedChineseEntries,
+          repairedDisplayEntries,
+        );
+      }
+    }
+
+    const mergedDisplayEntries = sortEntriesByTranscriptOrder(
+      rawText,
+      directJsonMode
+        ? combinedEntriesForDisplay.map((entry) => applyLearningEntryDefaults(entry))
+        : ensureDisplayableEntryDetails(combinedEntriesForDisplay),
     );
     const totalExtractedCount = mergedDisplayEntries.length;
 
@@ -4641,7 +5630,7 @@ export async function POST(request: Request) {
       message.includes("aborted due to timeout") || message.includes("The operation was aborted")
         ? (isAppendRequest || directTermMode)
           ? "词条生成超时。请重试一次；如果仍失败，请换一个更短的词或短语后再试。"
-          : "图片分析超时。请重试一次；如果仍失败，我建议优先切换到 Doubao-Seed-2.0-lite 或 Doubao-Seed-2.0-Code 再试。"
+          : "图片分析超时。当前已自动尝试直连识别与原文重建兜底，但这次仍未在时限内完成。请重试一次。"
         : `图片分析失败：${message}`;
     return NextResponse.json(
       {

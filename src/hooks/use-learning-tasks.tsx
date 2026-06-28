@@ -54,6 +54,7 @@ type LearningTasksContextValue = {
     rawText?: string;
     entries: RecognitionTask["entries"];
     properNouns?: RecognitionTask["properNouns"];
+    keepCurrentSelection?: boolean;
   }) => void;
   appendAnalysisToTask: (params: {
     taskId: string;
@@ -248,6 +249,17 @@ function sameHistoryShape(left: DictationSession[], right: DictationSession[]) {
   return leftKeys.every((key, index) => key === rightKeys[index]);
 }
 
+function resolveNextSelectedTaskId(
+  previousSelectedTaskId: string,
+  nextTasks: RecognitionTask[],
+) {
+  if (previousSelectedTaskId && nextTasks.some((task) => task.id === previousSelectedTaskId)) {
+    return previousSelectedTaskId;
+  }
+
+  return nextTasks[0]?.id ?? "";
+}
+
 export function LearningTasksProvider({ children }: { children: ReactNode }) {
   const [activeUserKey, setActiveUserKeyState] = useState("guest");
   const [cloudUserId, setCloudUserId] = useState<null | string>(null);
@@ -327,7 +339,7 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
 
         setTasks(nextTasks);
         setPracticeHistory(nextHistory);
-        setSelectedTaskId(nextTasks[0]?.id ?? "");
+        setSelectedTaskId((current) => resolveNextSelectedTaskId(current, nextTasks));
         setHydrated(true);
         return;
       }
@@ -368,7 +380,7 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
 
         setTasks(resolvedTasks);
         setPracticeHistory(resolvedHistory);
-        setSelectedTaskId(resolvedTasks[0]?.id ?? "");
+        setSelectedTaskId((current) => resolveNextSelectedTaskId(current, resolvedTasks));
         setHydrated(true);
 
         if (!sameTaskShape(nextTasks, resolvedTasks)) {
@@ -392,7 +404,7 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
 
         setTasks(nextTasks);
         setPracticeHistory(nextHistory);
-        setSelectedTaskId(nextTasks[0]?.id ?? "");
+        setSelectedTaskId((current) => resolveNextSelectedTaskId(current, nextTasks));
         setHydrated(true);
       }
     }
@@ -598,6 +610,7 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
     rawText?: string;
     entries: RecognitionTask["entries"];
     properNouns?: RecognitionTask["properNouns"];
+    keepCurrentSelection?: boolean;
   }) {
     let nextTask: null | RecognitionTask = null;
     setTasks((current) =>
@@ -612,7 +625,9 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
           : task,
       ),
     );
-    setSelectedTaskId(params.taskId);
+    if (!params.keepCurrentSelection) {
+      setSelectedTaskId(params.taskId);
+    }
     const browserClient = getSupabaseBrowserClient();
     if (browserClient && cloudUserId && nextTask) {
       void upsertTaskToCloud(browserClient, cloudUserId, nextTask).catch((error) => {

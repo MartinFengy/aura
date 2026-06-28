@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AudioLines,
   ChevronLeft,
@@ -18,7 +18,11 @@ import { GlassCard } from "@/components/aura/glass-card";
 import { LearningWorkspace } from "@/components/aura/learning-workspace";
 import { useAuraConfig } from "@/hooks/use-aura-config";
 import { useLearningTasks } from "@/hooks/use-learning-tasks";
-import { getRecognitionEntryQuality } from "@/lib/recognition-quality";
+import {
+  getRecognitionEntryQuality,
+  isLowQualityChineseMeaning,
+  isLowQualityTranslation,
+} from "@/lib/recognition-quality";
 import { speakText } from "@/lib/speech";
 
 function normalizeSentenceForDisplayOrder(value: string) {
@@ -90,14 +94,67 @@ function stopEntryActionEvent(event: {
   event.stopPropagation();
 }
 
+function resolveDisplayChinese(entry: {
+  vocabulary: string;
+  chinese: string;
+  partOfSpeech?: string;
+  sentenceChinese?: string;
+  exampleChinese?: string;
+}) {
+  if (!isLowQualityChineseMeaning(entry.vocabulary, entry.chinese)) {
+    return entry.chinese;
+  }
+
+  if (entry.sentenceChinese?.trim()) {
+    return entry.sentenceChinese.trim();
+  }
+
+  if (entry.exampleChinese?.trim()) {
+    return entry.exampleChinese.trim();
+  }
+
+  if (entry.chinese?.trim()) {
+    return entry.chinese.trim();
+  }
+
+  const partOfSpeech = entry.partOfSpeech?.toLowerCase() ?? "";
+  if (partOfSpeech.includes("proper")) {
+    return "专有名词";
+  }
+  if (partOfSpeech.includes("verb")) {
+    return "动词表达";
+  }
+  if (partOfSpeech.includes("noun")) {
+    return "名词性表达";
+  }
+  if (partOfSpeech.includes("adjective")) {
+    return "形容词表达";
+  }
+
+  return "固定表达";
+}
+
+function resolveSentenceChinese(entry: { sentenceChinese?: string }) {
+  return entry.sentenceChinese?.trim() || "原句翻译待补充";
+}
+
+function resolveExample(entry: { example?: string }) {
+  return entry.example?.trim() || "例句待补充";
+}
+
+function resolveExampleChinese(entry: { exampleChinese?: string }) {
+  return entry.exampleChinese?.trim() || "例句翻译待补充";
+}
+
 export default function ReadingPage() {
-  const { selectedTask, tasks, deleteEntry } = useLearningTasks();
+  const { selectedTask, tasks, deleteEntry, replaceTaskEntries } = useLearningTasks();
   const { config } = useAuraConfig();
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
   const [syncMessage, setSyncMessage] = useState("");
   const [permissionUrl, setPermissionUrl] = useState("");
   const [isSyncing, setIsSyncing] = useState(false);
+  const repairingTaskIdsRef = useRef<Set<string>>(new Set());
   const entries = useMemo(
     () =>
       sortEntriesByReadingOrder(selectedTask?.rawText ?? "", [
@@ -106,6 +163,76 @@ export default function ReadingPage() {
       ]),
     [selectedTask],
   );
+
+  useEffect(() => {
+    setPage(1);
+  }, [selectedTask?.id]);
+
+  useEffect(() => {
+    if (!selectedTask || repairingTaskIdsRef.current.has(selectedTask.id)) {
+      return;
+    }
+
+    const currentTaskId = selectedTask.id;
+
+    const needsChineseRepair = [...(selectedTask.entries ?? []), ...(selectedTask.properNouns ?? [])].some(
+      (entry) =>
+        isLowQualityChineseMeaning(entry.vocabulary, entry.chinese) ||
+        isLowQualityTranslation(entry.sentenceChinese ?? "") ||
+        isLowQualityTranslation(entry.exampleChinese ?? ""),
+    );
+
+    if (!needsChineseRepair || !selectedTask.rawText?.trim()) {
+      return;
+    }
+
+    repairingTaskIdsRef.current.add(selectedTask.id);
+
+    const formData = new FormData();
+    formData.append("instructions", "请补全当前词条的中文意思、原句翻译、例句和例句翻译，保持原 sentence 和 vocabulary 不变。");
+    formData.append("feishuLink", config.feishuLink);
+    formData.append("arkBaseUrl", config.arkBaseUrl);
+    formData.append("arkModel", config.arkModel);
+    formData.append("existingRawText", selectedTask.rawText);
+    formData.append(
+      "existingEntries",
+      JSON.stringify([...(selectedTask.entries ?? []), ...(selectedTask.properNouns ?? [])]),
+    );
+    formData.append("sourceFileName", selectedTask.name);
+    formData.append("stage2Enrich", "1");
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/analyze", {
+          method: "POST",
+          body: formData,
+        });
+        const payload = (await response.json()) as {
+          error?: string;
+          rawText?: string;
+          cleanedText?: string;
+          entries?: typeof selectedTask.entries;
+          properNouns?: typeof selectedTask.properNouns;
+        };
+
+        if (!response.ok || payload.error) {
+          return;
+        }
+
+        replaceTaskEntries({
+          taskId: currentTaskId,
+          rawText: payload.rawText ?? payload.cleanedText ?? selectedTask.rawText,
+          entries: payload.entries ?? selectedTask.entries,
+          properNouns: payload.properNouns ?? selectedTask.properNouns ?? [],
+          keepCurrentSelection: true,
+        });
+      } catch {
+      } finally {
+        repairingTaskIdsRef.current.delete(currentTaskId);
+      }
+    })();
+  }, [config.arkBaseUrl, config.arkModel, config.feishuLink, replaceTaskEntries, selectedTask]);
+
   const totalPages = Math.max(1, Math.ceil(entries.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pagedEntries = useMemo(
@@ -254,7 +381,7 @@ export default function ReadingPage() {
               ))}
             </select>
             <span>
-              第 {page} / {totalPages} 页
+              第 {currentPage} / {totalPages} 页
             </span>
             <span>
               当前显示 {pagedEntries.length} / {entries.length} 条
@@ -344,27 +471,23 @@ export default function ReadingPage() {
                 <div className="mt-4 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
                   <p className="text-[11px] text-stone-500">中文意思</p>
                   <p className="mt-1 text-sm leading-6 text-stone-700">
-                    {entry.chinese || " "}
+                    {resolveDisplayChinese(entry)}
                   </p>
                 </div>
-                {entry.sentenceChinese ? (
-                  <div className="mt-3 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
-                    <p className="text-[11px] text-stone-500">原句翻译</p>
-                    <p className="mt-1 text-sm leading-6 text-stone-700">{entry.sentenceChinese}</p>
-                  </div>
-                ) : null}
+                <div className="mt-3 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
+                  <p className="text-[11px] text-stone-500">原句翻译</p>
+                  <p className="mt-1 text-sm leading-6 text-stone-700">{resolveSentenceChinese(entry)}</p>
+                </div>
                 <div className="mt-3 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
                   <p className="text-[11px] text-stone-500">例句</p>
                   <p className="mt-1 text-sm leading-6 text-stone-700">
-                    {entry.example || " "}
+                    {resolveExample(entry)}
                   </p>
                 </div>
-                {entry.exampleChinese ? (
-                  <div className="mt-3 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
-                    <p className="text-[11px] text-stone-500">例句翻译</p>
-                    <p className="mt-1 text-sm leading-6 text-stone-700">{entry.exampleChinese}</p>
-                  </div>
-                ) : null}
+                <div className="mt-3 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
+                  <p className="text-[11px] text-stone-500">例句翻译</p>
+                  <p className="mt-1 text-sm leading-6 text-stone-700">{resolveExampleChinese(entry)}</p>
+                </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -455,21 +578,15 @@ export default function ReadingPage() {
                     </td>
                     <td className="px-4 py-4 align-top text-sm leading-7 text-stone-700">
                       <div className="max-w-[320px] space-y-2">
-                        <div>{entry.chinese || " "}</div>
-                        {entry.sentenceChinese ? (
-                          <div className="text-stone-500">{entry.sentenceChinese}</div>
-                        ) : null}
+                        <div>{resolveDisplayChinese(entry)}</div>
+                        <div className="text-stone-500">{resolveSentenceChinese(entry)}</div>
                       </div>
                     </td>
                     <td className="px-4 py-4 align-top text-sm leading-7 text-stone-700">
                       <div className="flex flex-wrap items-start gap-3">
                         <div className="max-w-[460px]">
-                          <div>
-                            {entry.example || " "}
-                          </div>
-                          {entry.exampleChinese ? (
-                            <div className="mt-2 text-stone-500">{entry.exampleChinese}</div>
-                          ) : null}
+                          <div>{resolveExample(entry)}</div>
+                          <div className="mt-2 text-stone-500">{resolveExampleChinese(entry)}</div>
                         </div>
                         <button
                           type="button"

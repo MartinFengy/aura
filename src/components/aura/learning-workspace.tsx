@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   CloudUpload,
@@ -32,8 +32,189 @@ const quickActions = [
   { label: "上传图片/文件", icon: ImagePlus },
 ];
 
-const defaultAnalysisPrompt =
-  "你现在是一位经验丰富、讲解细致的英文老师。请按照课堂讲解的标准，逐句深入分析原文，从每句话中尽可能多提取中国高中英语水平以上的高质量单词、固定搭配、短语动词、名词短语、新闻常用表达，以及值得了解的人名、地名、机构名、头衔和其他专有名词。不要只给每个长句提取 1 个词，要尽量分块提取有学习价值的表达；同时舍弃 I、we、is、are、often、very 这类过于基础或学习价值低的词。每个词条都要给出准确中文意思、原句翻译、自然例句、例句翻译和发音。";
+const defaultAnalysisPrompt = `你现在是一位经验丰富、讲解细致的英文老师。请按照课堂讲解的标准，逐句深入分析原文，并且一定要从拆解长难句的角度出发：先看句子主干，再看修饰成分、固定搭配、短语动词、名词短语和新闻常用表达，然后提取真正值得讲解的块。
+
+请从每句话中尽可能多提取中国高中英语水平以上的高质量单词、固定搭配、短语动词、名词短语、新闻常用表达，以及值得了解的人名、地名、机构名、头衔和其他专有名词。
+
+不要只给每个长句提取 1 个词，但也不要机械地把一句话切成很多重复、重叠或不完整的小碎片；要优先保留像老师上课会重点讲解的完整表达（Minimal Complete Learning Unit），而不是普通句子片段。
+
+同时舍弃 I、we、is、are、often、very、good、bad、big、small、make、do 等过于基础或学习价值低的词，除非它们构成固定搭配。
+
+每个词条都要给出准确中文意思、原句翻译、自然例句、例句翻译和发音。
+
+---
+
+请按以下规则执行：
+
+### 一、图片与原文还原
+
+1. 只保留图片中真正有学习价值的英文内容，忽略 Logo、图标、时间戳、水印、UI、OCR 噪声和乱码。
+2. cleanedText 必须按从上到下顺序完整还原所有可读英文，包括长图后半部分，不得遗漏、重复或打乱顺序。
+3. sentence 必须是真实出现在 cleanedText 中的一条完整原句，不允许拼接或生成原文不存在的句子。
+
+### 二、词条提取
+
+4. 提取前先理解句子主干和修饰结构，但不要输出句法分析，只输出真正值得学习的语言知识点。
+5. learningEntries 优先提取高质量单词、固定搭配、短语动词、名词短语、新闻表达和专业术语；properNouns 仅存放人物、地名、机构、组织、职位、头衔、事件等专有名词。
+6. 每句优先提取 2~6 个 learningEntries，再补充 properNouns，不要让专有名词挤占学习词条。
+7. 如果一句中还有更值得学习的动词、搭配、短语、名词短语，不要只提取国家、机构、人物、职位等专有名词。
+
+### 三、禁止输出
+
+不要输出：
+
+- 完整句子
+- 普通主谓结构（如 officials said、Local media reported、drones fell）
+- 半截表达（如 life in prison without、Gilgo Beach serial）
+- 没有固定意义的句子碎片（如 after Moscow、reported that）
+- OCR 粘连内容或乱码
+
+每个词条必须能够独立学习，而不是句子的一部分。
+
+### 四、专有名词规则
+
+同一个实体采用最长匹配原则，只保留最完整、最准确的一种表达。
+
+例如：
+
+Prime Minister Benjamin Netanyahu
+
+不要再输出：
+
+- Prime Minister Benjamin
+- Minister Benjamin Netanyahu
+- Benjamin Netanyahu
+- Netanyahu
+
+The European Union
+
+不要再输出：
+
+- European Union
+- The European
+- European
+- Union
+
+如果职位本身具有独立学习价值，可以额外保留一次职位，例如 Prime Minister。
+
+全文同一个实体只保留一次。
+
+### 五、去重规则
+
+输出前统一去重：
+
+- 大小写不同视为重复；
+- 单复数视为重复；
+- 动词时态、词形变化统一保留词典原形；
+- 已保留完整表达，不再输出其组成部分；
+- 包含关系和语义重复只保留学习价值最高的一项。
+
+例如：
+
+已经抽取：
+
+air defense system
+
+不要再输出：
+
+- air defense
+- defense system
+
+已经抽取：
+
+according to local media
+
+不要再输出：
+
+- according to
+- local media
+
+全文相同词条只能出现一次。
+
+### 六、输出要求
+
+- vocabulary 必须真实出现在对应 sentence 中。
+- chinese、sentenceChinese、example、exampleChinese 必须自然、准确、完整。
+- difficulty 使用 B1 / B2 / C1。
+- pronunciation 使用适合 TTS 的英文读法。
+
+---
+
+后端固定约束（实际也会继续拼给模型）：
+
+1. 必须按结构化 JSON 返回结果，而不是自由文本。
+2. 返回字段包含 cleanedText、learningEntries、properNouns，其中：
+   - learningEntries 包含：sentence、vocabulary、chinese、partOfSpeech、sentenceChinese、example、exampleChinese、difficulty、pronunciation。
+   - properNouns 包含：sentence、vocabulary、chinese、partOfSpeech、sentenceChinese。
+3. sentence 必须来自原文，vocabulary 必须真实出现在对应 sentence 中。
+4. 不允许输出半截表达、重复表达、OCR 噪声、普通主谓新闻叙述或被完整词条覆盖的组成部分。
+5. 优先保证 learningEntries 的学习价值，properNouns 仅作为补充，不得挤占 learningEntries。
+6. 中文意思、原句翻译、例句、例句翻译等字段必须完整、准确，如缺失应自动补全。
+7. 最终仅返回合法 JSON，不允许返回 Markdown 或其他解释文本。`;
+
+const backendJsonSchemaPreview = `{
+  "cleanedText": "string",
+  "learningEntries": [
+    {
+      "sentence": "string",
+      "vocabulary": "string",
+      "chinese": "string",
+      "partOfSpeech": "string",
+      "sentenceChinese": "string",
+      "example": "string",
+      "exampleChinese": "string",
+      "difficulty": "string",
+      "pronunciation": "string"
+    }
+  ],
+  "properNouns": [
+    {
+      "sentence": "string",
+      "vocabulary": "string",
+      "chinese": "string",
+      "partOfSpeech": "string",
+      "sentenceChinese": "string",
+      "example": "string",
+      "exampleChinese": "string",
+      "difficulty": "string",
+      "pronunciation": "string"
+    }
+  ]
+}`;
+
+const promptModeLabel = "当前模式：直接使用你的提示词";
+
+function shouldMigrateLegacyPrompt(prompt: string) {
+  const normalized = prompt.trim();
+  if (!normalized) {
+    return true;
+  }
+
+  const hasNewSections =
+    normalized.includes("### 一、图片与原文还原") &&
+    normalized.includes("### 二、词条提取") &&
+    normalized.includes("### 六、输出要求");
+
+  if (hasNewSections) {
+    return false;
+  }
+
+  return (
+    normalized.startsWith("你现在是一位经验丰富、讲解细致的英文老师。请按照课堂讲解的标准") ||
+    normalized.includes("后端固定约束（实际也会继续拼给模型）") ||
+    normalized.includes("返回字段会包含 cleanedText、learningEntries、properNouns")
+  );
+}
+
+function appendAdditionalInstructions(basePrompt: string, extraInstructions: string) {
+  const normalizedBasePrompt = basePrompt.trim() || defaultAnalysisPrompt;
+  const normalizedExtraInstructions = extraInstructions.trim();
+  if (!normalizedExtraInstructions) {
+    return normalizedBasePrompt;
+  }
+
+  return `${normalizedBasePrompt}\n\n${normalizedExtraInstructions}`;
+}
 
 function splitTranscriptSentences(transcript: string) {
   const protectedText = transcript.replace(
@@ -380,6 +561,20 @@ export function LearningWorkspace() {
   const [editingTaskId, setEditingTaskId] = useState("");
   const [taskNameDraft, setTaskNameDraft] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const promptPreview =
+    selectedAction === "上传图片/文件"
+      ? draft || defaultAnalysisPrompt
+      : draft;
+
+  useEffect(() => {
+    if (shouldMigrateLegacyPrompt(draft)) {
+      setDraft(defaultAnalysisPrompt);
+    }
+
+    if (shouldMigrateLegacyPrompt(savedAnalysisPrompt)) {
+      setSavedAnalysisPrompt(defaultAnalysisPrompt);
+    }
+  }, [draft, savedAnalysisPrompt]);
 
   const messages = useMemo(
     () =>
@@ -391,6 +586,35 @@ export function LearningWorkspace() {
     [config.feishuLink, queuedFiles.length, selectedTask?.name],
   );
 
+  function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
+    return new Promise<T>((resolve, reject) => {
+      const timer = window.setTimeout(() => reject(new Error(message)), ms);
+      promise.then(
+        (value) => {
+          window.clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          window.clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
+  }
+
+  async function loadImageElement(imageUrl: string) {
+    return withTimeout(
+      new Promise<HTMLImageElement>((resolve, reject) => {
+        const nextImage = new Image();
+        nextImage.onload = () => resolve(nextImage);
+        nextImage.onerror = () => reject(new Error("图片读取失败"));
+        nextImage.src = imageUrl;
+      }),
+      12000,
+      "图片读取超时",
+    );
+  }
+
   async function optimizeImage(file: File) {
     if (!file.type.startsWith("image/") || file.type === "image/svg+xml") {
       return file;
@@ -399,12 +623,7 @@ export function LearningWorkspace() {
     const imageUrl = URL.createObjectURL(file);
 
     try {
-      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const nextImage = new Image();
-        nextImage.onload = () => resolve(nextImage);
-        nextImage.onerror = () => reject(new Error("图片读取失败"));
-        nextImage.src = imageUrl;
-      });
+      const image = await loadImageElement(imageUrl);
 
       const maxWidth = 2200;
       const maxHeight = 4200;
@@ -432,14 +651,18 @@ export function LearningWorkspace() {
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
       const targetMimeType = file.type === "image/png" ? "image/png" : "image/jpeg";
-      const blob = await new Promise<Blob | null>((resolve) => {
-        if (targetMimeType === "image/png") {
-          canvas.toBlob(resolve, targetMimeType);
-          return;
-        }
+      const blob = await withTimeout(
+        new Promise<Blob | null>((resolve) => {
+          if (targetMimeType === "image/png") {
+            canvas.toBlob(resolve, targetMimeType);
+            return;
+          }
 
-        canvas.toBlob(resolve, targetMimeType, 0.92);
-      });
+          canvas.toBlob(resolve, targetMimeType, 0.92);
+        }),
+        10000,
+        "图片压缩超时",
+      ).catch(() => null);
 
       if (!blob) {
         return file;
@@ -467,12 +690,7 @@ export function LearningWorkspace() {
 
     const imageUrl = URL.createObjectURL(file);
     try {
-      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const nextImage = new Image();
-        nextImage.onload = () => resolve(nextImage);
-        nextImage.onerror = () => reject(new Error("图片读取失败"));
-        nextImage.src = imageUrl;
-      });
+      const image = await loadImageElement(imageUrl);
 
       return {
         fileName: file.name,
@@ -578,17 +796,53 @@ export function LearningWorkspace() {
           : "正在基于已有材料继续追加词汇，请稍候...",
       );
 
-      const optimizedFiles = await Promise.all(queuedFiles.map((file) => optimizeImage(file)));
-      const preparedImages = await Promise.all(
-        optimizedFiles.map((file) => prepareImageForUpload(file)),
-      );
+      const optimizedFiles: File[] = [];
+      for (const [index, file] of queuedFiles.entries()) {
+        if (queuedFiles.length > 1) {
+          setStatusMessage(`正在处理第 ${index + 1}/${queuedFiles.length} 张图片，请稍候...`);
+        }
+
+        try {
+          optimizedFiles.push(await optimizeImage(file));
+        } catch {
+          optimizedFiles.push(file);
+        }
+      }
+
+      const preparedImages: PreparedUploadImage[] = [];
+      for (const [index, file] of optimizedFiles.entries()) {
+        if (optimizedFiles.length > 1) {
+          setStatusMessage(`正在读取第 ${index + 1}/${optimizedFiles.length} 张图片信息，请稍候...`);
+        }
+
+        try {
+          preparedImages.push(await prepareImageForUpload(file));
+        } catch {
+          preparedImages.push({
+            files: [file],
+            useOcrFirst: false,
+            metadata: {
+              fileName: file.name,
+              mimeType: file.type,
+              width: 0,
+              height: 0,
+              originalSize: queuedFiles[index]?.size ?? file.size,
+              uploadSize: file.size,
+            },
+          });
+        }
+      }
+
+      if (queuedFiles.length > 0) {
+        setStatusMessage("图片准备完成，正在调用 Aura Agent 分析，请稍候...");
+      }
       const filesToUpload = optimizedFiles;
       const imageMetadata = preparedImages.map((item, index) => ({
         ...item.metadata,
         originalSize: queuedFiles[index]?.size ?? item.metadata.originalSize,
       }));
       const formData = new FormData();
-      let effectiveInstructions = draft;
+      let effectiveInstructions = draft.trim() || defaultAnalysisPrompt;
       let effectiveRawText = "";
       let targetTaskId = undefined as string | undefined;
       let targetTaskName = undefined as string | undefined;
@@ -630,7 +884,10 @@ export function LearningWorkspace() {
         if (!matchedTarget) {
           if (sentenceHints.length > 0) {
             effectiveRawText = sentenceHints.join("\n");
-            effectiveInstructions = `请只追加这些指定词汇或短语本身：${requestedTerms.join("、")}。我提供了目标原句，请先在句子里定位这些表达；如果词语是单数/复数、大小写或轻微变形，请按同一表达处理。每个指定表达最多输出 1 条记录，不要扩展到其他相关词条，也不要补充额外单词。`;
+            effectiveInstructions = appendAdditionalInstructions(
+              draft,
+              `当前是定向追加模式。请只追加这些指定词汇或短语本身：${requestedTerms.join("、")}。我提供了目标原句，请先在句子里定位这些表达；如果词语是单数/复数、大小写或轻微变形，请按同一表达处理。每个指定表达最多输出 1 条记录，不要扩展到其他相关词条，也不要补充额外单词。`,
+            );
             setStatusMessage(
               "没有在本地任务里精确定位到原句，已改为基于你输入的原句提示直接补充提取。",
             );
@@ -639,7 +896,10 @@ export function LearningWorkspace() {
             targetTaskName = selectedTask.name;
             targetExistingEntries = selectedTask.entries ?? [];
             effectiveRawText = selectedTask.rawText;
-            effectiveInstructions = `你现在是一位非常认真、非常有耐心的英文老师。请在我提供的原文里逐句搜索这些指定词汇或短语：${requestedTerms.join("、")}。必须优先在原文中定位它们真实出现的位置，并直接使用原文里的完整句子。不要自行新造原句，不要把一个词拆成多个更小的片段，也不要扩展到未指定的其他词。若这些表达在原文中真实存在，就把它们逐条输出；若某个表达不存在，就忽略它。`;
+            effectiveInstructions = appendAdditionalInstructions(
+              draft,
+              `当前是定向追加模式。请在我提供的原文里逐句搜索这些指定词汇或短语：${requestedTerms.join("、")}。必须优先在原文中定位它们真实出现的位置，并直接使用原文里的完整句子。不要自行新造原句，不要把一个词拆成多个更小的片段，也不要扩展到未指定的其他词。若这些表达在原文中真实存在，就把它们逐条输出；若某个表达不存在，就忽略它。`,
+            );
             setStatusMessage("没有精确命中局部句子，已改为在当前任务全文中搜索这些指定表达。");
           } else {
             directTermMode = true;
@@ -647,7 +907,10 @@ export function LearningWorkspace() {
             targetTaskName = undefined;
             targetExistingEntries = [];
             effectiveRawText = "";
-            effectiveInstructions = `请直接为这些指定词汇或短语生成学习卡片：${requestedTerms.join("、")}。每个词条都需要包含一个完整自然的英文句子、准确中文意思、一个新的英文例句，以及便于朗读的发音文本。不要依赖原文，也不要扩展到未指定的其他词。`;
+            effectiveInstructions = appendAdditionalInstructions(
+              draft,
+              `当前是直接生成模式。请直接为这些指定词汇或短语生成学习卡片：${requestedTerms.join("、")}。每个词条都需要包含一个完整自然的英文句子、准确中文意思、一个新的英文例句，以及便于朗读的发音文本。不要依赖原文，也不要扩展到未指定的其他词。`,
+            );
             setStatusMessage("已切换为直接生成词条模式，不再依赖原文。");
           }
         } else {
@@ -655,7 +918,10 @@ export function LearningWorkspace() {
           targetTaskName = matchedTarget.task.name;
           targetExistingEntries = matchedTarget.task.entries ?? [];
           effectiveRawText = matchedTarget.matchedSentences.join("\n");
-          effectiveInstructions = `请只追加这些指定词汇或短语本身：${requestedTerms.join("、")}。先找到它们所在的原句，再只输出这些指定表达各自对应的词条。不要扩展到句子里的其他高质量词汇，不要补充其他相关词条，也不要重复已有内容。若我给出了目标句子提示，请优先以该句为准。`;
+          effectiveInstructions = appendAdditionalInstructions(
+            draft,
+            `当前是定向追加模式。请只追加这些指定词汇或短语本身：${requestedTerms.join("、")}。先找到它们所在的原句，再只输出这些指定表达各自对应的词条。不要扩展到句子里的其他高质量词汇，不要补充其他相关词条，也不要重复已有内容。若我给出了目标句子提示，请优先以该句为准。`,
+          );
           setStatusMessage(`将基于任务「${matchedTarget.task.name}」中的对应原句继续追加。`);
         }
       }
@@ -669,6 +935,11 @@ export function LearningWorkspace() {
       formData.append("requestedTerms", JSON.stringify(appendRequestedTerms));
       formData.append("directTermMode", directTermMode ? "1" : "0");
       formData.append("imageMetadata", JSON.stringify(imageMetadata));
+      if (queuedFiles.length > 0) {
+        formData.append("preferVision", "1");
+        formData.append("fastMode", "1");
+        formData.append("directJsonMode", "1");
+      }
 
       const response = await fetch("/api/analyze", {
         method: "POST",
@@ -916,17 +1187,23 @@ export function LearningWorkspace() {
                     </div>
                   ) : (
                     <>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedTaskId(task.id)}
-                        className="w-full text-left"
-                      >
+                      <div className="rounded-xl">
                         <p className="font-medium">{task.name}</p>
                         <p className={`mt-2 text-xs ${active ? "text-stone-300" : "text-stone-500"}`}>
                           {task.entries.length} 条词汇 · {task.createdAt}
                         </p>
-                      </button>
+                      </div>
                       <div className="mt-3 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTaskId(task.id)}
+                          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs ${
+                            active ? "bg-white/15 text-white" : "bg-stone-900 text-white"
+                          }`}
+                        >
+                          <Languages className="h-3.5 w-3.5" />
+                          切换任务
+                        </button>
                         <button
                           type="button"
                           onPointerDown={stopTaskActionEvent}
@@ -980,17 +1257,22 @@ export function LearningWorkspace() {
             </div>
 
             <div className="flex items-start justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  if (selectedAction !== "文字追加" && draft.trim()) {
-                    setSavedAnalysisPrompt(draft);
-                  }
-                }}
-                className="max-w-full break-words rounded-[24px] rounded-tr-md bg-stone-900 px-4 py-3 text-left text-sm leading-7 text-white transition hover:bg-stone-800 sm:max-w-[92%]"
-              >
-                {draft}
-              </button>
+              <div className="max-w-full sm:max-w-[92%]">
+                <div className="mb-2 text-right text-[11px] tracking-[0.08em] text-stone-500">
+                  {promptModeLabel}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedAction !== "文字追加" && draft.trim()) {
+                      setSavedAnalysisPrompt(draft);
+                    }
+                  }}
+                  className="w-full break-words rounded-[24px] rounded-tr-md bg-stone-900 px-4 py-3 text-left text-sm leading-7 text-white transition hover:bg-stone-800"
+                >
+                  {promptPreview}
+                </button>
+              </div>
             </div>
 
             <div className="flex items-start gap-3">
@@ -1001,6 +1283,22 @@ export function LearningWorkspace() {
                 {messages[1]}
               </div>
             </div>
+
+            {selectedAction === "上传图片/文件" ? (
+              <div className="flex items-start gap-3">
+                <div className="mt-1 rounded-full bg-white p-2 text-stone-700 shadow-sm">
+                  <FileCheck2 className="h-4 w-4" />
+                </div>
+                <div className="max-w-full break-words rounded-[24px] rounded-tl-md border border-white/70 bg-[#fffdfa] px-4 py-3 text-sm leading-7 text-stone-700 sm:max-w-[92%]">
+                  <div className="mb-2 text-[11px] tracking-[0.08em] text-stone-500">
+                    后端 JSON Schema
+                  </div>
+                  <pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs leading-6 text-stone-700">
+                    {backendJsonSchemaPreview}
+                  </pre>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-3">

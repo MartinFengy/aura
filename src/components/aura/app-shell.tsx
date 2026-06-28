@@ -18,6 +18,8 @@ import { clearActiveUserKey } from "@/lib/learning-store";
 import { GlassCard } from "@/components/aura/glass-card";
 import { BalloonBackground } from "@/components/aura/balloon-background";
 
+const LOCAL_DEV_BYPASS_KEY = "aura-local-dev-bypass";
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -52,6 +54,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const client = getSupabaseBrowserClient();
     if (client && hasSupabaseEnv()) {
       await client.auth.signOut();
+    }
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(LOCAL_DEV_BYPASS_KEY);
     }
     clearActiveUserKey();
     router.push("/login");
