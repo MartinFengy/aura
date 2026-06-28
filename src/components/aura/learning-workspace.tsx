@@ -1140,124 +1140,124 @@ export function LearningWorkspace() {
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[280px_1fr]">
-        <div className="rounded-[28px] border border-white/70 bg-white/55 p-4">
+      <div className="flex min-w-0 flex-col gap-4">
+        <div className="min-w-0 rounded-[28px] border border-white/70 bg-white/55 p-4">
           <div className="mb-4 flex items-center gap-2 text-sm font-medium text-stone-700">
             <Languages className="h-4 w-4" />
             历史任务
           </div>
-          <div className="space-y-3">
-            {tasks.map((task) => {
-              const active = selectedTaskId === task.id;
-              return (
-                <div
-                  key={task.id}
-                  className={`rounded-2xl px-3 py-3 text-sm transition ${
-                    active
-                      ? "bg-stone-900 text-white"
-                      : "border border-white/65 bg-[#fbf8f4] text-stone-600 hover:bg-white"
-                  }`}
-                >
-                  {editingTaskId === task.id ? (
-                    <div className="space-y-3">
-                      <input
-                        value={taskNameDraft}
-                        onChange={(event) => setTaskNameDraft(event.target.value)}
-                        className="w-full rounded-xl border border-white/30 bg-white/90 px-3 py-2 text-sm text-stone-800 outline-none"
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={submitRename}
-                          className="rounded-full bg-white px-3 py-1.5 text-xs text-stone-900"
-                        >
-                          保存
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingTaskId("");
-                            setTaskNameDraft("");
-                          }}
-                          className="rounded-full border border-white/40 px-3 py-1.5 text-xs"
-                        >
-                          取消
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="rounded-xl">
-                        <p className="font-medium">{task.name}</p>
-                        <p className={`mt-2 text-xs ${active ? "text-stone-300" : "text-stone-500"}`}>
-                          {task.entries.length} 条词汇 · {task.createdAt}
-                        </p>
-                      </div>
-                      <div className="mt-3 flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedTaskId(task.id)}
-                          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs ${
-                            active ? "bg-white/15 text-white" : "bg-stone-900 text-white"
-                          }`}
-                        >
-                          <Languages className="h-3.5 w-3.5" />
-                          切换任务
-                        </button>
-                        <button
-                          type="button"
-                          onPointerDown={stopTaskActionEvent}
-                          onMouseDown={stopTaskActionEvent}
-                          onTouchStart={stopTaskActionEvent}
-                          onClick={(event) => {
-                            stopTaskActionEvent(event);
-                            startRename(task.id, task.name);
-                          }}
-                          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs ${
-                            active ? "bg-white/15 text-white" : "bg-white text-stone-700"
-                          }`}
-                        >
-                          <PencilLine className="h-3.5 w-3.5" />
-                          改名
-                        </button>
-                        <button
-                          type="button"
-                          onPointerDown={stopTaskActionEvent}
-                          onMouseDown={stopTaskActionEvent}
-                          onTouchStart={stopTaskActionEvent}
-                          onClick={(event) => {
-                            stopTaskActionEvent(event);
-                            confirmDeleteTask(task.id, task.name);
-                          }}
-                          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs ${
-                            active ? "bg-white/15 text-white" : "bg-white text-stone-700"
-                          }`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          删除
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              );
-            })}
+
+          <div className="max-w-full overflow-x-auto pb-1">
+            <div className="inline-flex min-w-max gap-2 px-1">
+              {tasks.map((task) => {
+                const active = selectedTaskId === task.id;
+                return (
+                  <button
+                    key={task.id}
+                    type="button"
+                    onClick={() => setSelectedTaskId(task.id)}
+                    className={`rounded-full px-4 py-2 text-sm whitespace-nowrap transition ${
+                      active
+                        ? "bg-stone-900 text-white"
+                        : "border border-stone-200 bg-white text-stone-700"
+                    }`}
+                  >
+                    {task.name}
+                  </button>
+                );
+              })}
+            </div>
           </div>
+
+          {selectedTask ? (
+            <div className="mt-4 rounded-[24px] border border-white/65 bg-white/80 px-4 py-4 text-stone-700">
+              {editingTaskId === selectedTask.id ? (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium text-stone-800">重命名当前任务</p>
+                  <input
+                    value={taskNameDraft}
+                    onChange={(event) => setTaskNameDraft(event.target.value)}
+                    className="w-full rounded-[18px] border border-white/70 bg-white px-3 py-3 text-sm text-stone-700 outline-none"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={submitRename}
+                      className="rounded-full bg-stone-900 px-4 py-2 text-sm text-white"
+                    >
+                      保存名称
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingTaskId("");
+                        setTaskNameDraft("");
+                      }}
+                      className="rounded-full border border-stone-200 bg-white px-4 py-2 text-sm text-stone-700"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0">
+                    <p className="break-all text-base font-semibold text-stone-900 sm:text-lg">
+                      {selectedTask.name}
+                    </p>
+                    <p className="mt-1 text-xs text-stone-500 sm:text-sm">
+                      {selectedTask.entries.length} 条词汇 · {selectedTask.createdAt}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onPointerDown={stopTaskActionEvent}
+                      onMouseDown={stopTaskActionEvent}
+                      onTouchStart={stopTaskActionEvent}
+                      onClick={(event) => {
+                        stopTaskActionEvent(event);
+                        startRename(selectedTask.id, selectedTask.name);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
+                    >
+                      <PencilLine className="h-3.5 w-3.5" />
+                      改名
+                    </button>
+                    <button
+                      type="button"
+                      onPointerDown={stopTaskActionEvent}
+                      onMouseDown={stopTaskActionEvent}
+                      onTouchStart={stopTaskActionEvent}
+                      onClick={(event) => {
+                        stopTaskActionEvent(event);
+                        confirmDeleteTask(selectedTask.id, selectedTask.name);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      删除
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
 
-        <div className="min-w-0 rounded-[30px] border border-white/70 bg-[#fffdfa]/80 p-4 sm:p-5">
+        <div className="min-w-0 max-w-full overflow-x-hidden rounded-[30px] border border-white/70 bg-[#fffdfa]/80 p-4 sm:p-5">
           <div className="space-y-4">
-            <div className="flex items-start gap-3">
+            <div className="flex min-w-0 items-start gap-3">
               <div className="mt-1 rounded-full bg-stone-900 p-2 text-white">
                 <Bot className="h-4 w-4" />
               </div>
-              <div className="max-w-full break-words rounded-[24px] rounded-tl-md bg-[#f1e8dc] px-4 py-3 text-sm leading-7 text-stone-700 sm:max-w-[88%]">
+              <div className="min-w-0 flex-1 overflow-hidden whitespace-normal break-words rounded-[24px] rounded-tl-md bg-[#f1e8dc] px-4 py-3 text-sm leading-7 text-stone-700 sm:max-w-[88%]">
                 {messages[0]}
               </div>
             </div>
 
-            <div className="flex items-start justify-end gap-3">
-              <div className="max-w-full sm:max-w-[92%]">
+            <div className="flex min-w-0 items-start justify-end gap-3">
+              <div className="ml-auto min-w-0 w-full sm:max-w-[92%]">
                 <div className="mb-2 text-right text-[11px] tracking-[0.08em] text-stone-500">
                   {promptModeLabel}
                 </div>
@@ -1268,28 +1268,28 @@ export function LearningWorkspace() {
                       setSavedAnalysisPrompt(draft);
                     }
                   }}
-                  className="w-full break-words rounded-[24px] rounded-tr-md bg-stone-900 px-4 py-3 text-left text-sm leading-7 text-white transition hover:bg-stone-800"
+                  className="block w-full min-w-0 overflow-hidden whitespace-normal break-words rounded-[24px] rounded-tr-md bg-stone-900 px-4 py-3 text-left text-sm leading-7 text-white transition hover:bg-stone-800"
                 >
                   {promptPreview}
                 </button>
               </div>
             </div>
 
-            <div className="flex items-start gap-3">
+            <div className="flex min-w-0 items-start gap-3">
               <div className="mt-1 rounded-full bg-white p-2 text-stone-700 shadow-sm">
                 <Sparkles className="h-4 w-4" />
               </div>
-              <div className="max-w-full break-words rounded-[24px] rounded-tl-md border border-white/70 bg-white/90 px-4 py-3 text-sm leading-7 text-stone-700 sm:max-w-[88%]">
+              <div className="min-w-0 flex-1 overflow-hidden whitespace-normal break-words rounded-[24px] rounded-tl-md border border-white/70 bg-white/90 px-4 py-3 text-sm leading-7 text-stone-700 sm:max-w-[88%]">
                 {messages[1]}
               </div>
             </div>
 
             {selectedAction === "上传图片/文件" ? (
-              <div className="flex items-start gap-3">
+              <div className="flex min-w-0 items-start gap-3">
                 <div className="mt-1 rounded-full bg-white p-2 text-stone-700 shadow-sm">
                   <FileCheck2 className="h-4 w-4" />
                 </div>
-                <div className="max-w-full break-words rounded-[24px] rounded-tl-md border border-white/70 bg-[#fffdfa] px-4 py-3 text-sm leading-7 text-stone-700 sm:max-w-[92%]">
+                <div className="min-w-0 flex-1 overflow-hidden whitespace-normal break-words rounded-[24px] rounded-tl-md border border-white/70 bg-[#fffdfa] px-4 py-3 text-sm leading-7 text-stone-700 sm:max-w-[92%]">
                   <div className="mb-2 text-[11px] tracking-[0.08em] text-stone-500">
                     后端 JSON Schema
                   </div>

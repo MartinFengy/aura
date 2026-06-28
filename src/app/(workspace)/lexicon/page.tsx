@@ -21,51 +21,25 @@ import { GlassCard } from "@/components/aura/glass-card";
 import { useLearningTasks } from "@/hooks/use-learning-tasks";
 import {
   getRecognitionEntryQuality,
+  isLowQualityExample,
   isLowQualityChineseMeaning,
+  isLowQualityTranslation,
 } from "@/lib/recognition-quality";
 import type { DictationMode, DictationResult } from "@/lib/learning-store";
 import { speakSequence, speakText, stopSpeaking } from "@/lib/speech";
 
 type ScopedEntry = ReturnType<typeof buildScopedEntries>[number];
+type LexiconFilter = "all" | string;
 
 function resolveDisplayChinese(entry: {
   vocabulary: string;
   chinese: string;
-  partOfSpeech?: string;
-  sentenceChinese?: string;
-  exampleChinese?: string;
 }) {
   if (!isLowQualityChineseMeaning(entry.vocabulary, entry.chinese)) {
     return entry.chinese;
   }
 
-  if (entry.sentenceChinese?.trim()) {
-    return entry.sentenceChinese.trim();
-  }
-
-  if (entry.exampleChinese?.trim()) {
-    return entry.exampleChinese.trim();
-  }
-
-  if (entry.chinese?.trim()) {
-    return entry.chinese.trim();
-  }
-
-  const partOfSpeech = entry.partOfSpeech?.toLowerCase() ?? "";
-  if (partOfSpeech.includes("proper")) {
-    return "专有名词";
-  }
-  if (partOfSpeech.includes("verb")) {
-    return "动词表达";
-  }
-  if (partOfSpeech.includes("noun")) {
-    return "名词性表达";
-  }
-  if (partOfSpeech.includes("adjective")) {
-    return "形容词表达";
-  }
-
-  return "固定表达";
+  return "";
 }
 
 function buildScopedEntries(taskIds: string[], tasks: ReturnType<typeof useLearningTasks>["tasks"]) {
@@ -95,6 +69,7 @@ export default function LexiconPage() {
   const [configExpanded, setConfigExpanded] = useState(true);
   const [entryPageSize, setEntryPageSize] = useState(8);
   const [entryPage, setEntryPage] = useState(1);
+  const [lexiconFilter, setLexiconFilter] = useState<LexiconFilter>("all");
 
   const [dictationCount, setDictationCount] = useState(10);
   const [dictationCountDraft, setDictationCountDraft] = useState("10");
@@ -145,22 +120,30 @@ export default function LexiconPage() {
     [activeTaskIds, tasks],
   );
 
-  const latestSelectedTaskResult = useMemo(() => {
-    if (!selectedTask) {
-      return "未开始";
+  const lexiconEntries = useMemo(() => {
+    if (lexiconFilter === "all") {
+      return buildScopedEntries(
+        tasks.map((task) => task.id),
+        tasks,
+      );
     }
 
-    const latestSession = practiceHistory.find((session) =>
-      session.taskIds.includes(selectedTask.id),
-    );
-    if (!latestSession) {
-      return "未开始";
+    const matchedTask = tasks.find((task) => task.id === lexiconFilter);
+    if (!matchedTask) {
+      return [];
     }
 
-    return `错题 ${latestSession.wrongCount} · 模糊 ${latestSession.fuzzyCount}`;
-  }, [practiceHistory, selectedTask]);
-
-  const entries = useMemo(() => selectedTask?.entries ?? [], [selectedTask]);
+    return matchedTask.entries.map((entry) => ({
+      ...entry,
+      taskId: matchedTask.id,
+      taskName: matchedTask.name,
+    }));
+  }, [lexiconFilter, tasks]);
+  const entries = lexiconEntries;
+  const activeLexiconTask = useMemo(
+    () => (lexiconFilter === "all" ? null : tasks.find((task) => task.id === lexiconFilter) ?? null),
+    [lexiconFilter, tasks],
+  );
   const entryTotalPages = Math.max(1, Math.ceil(entries.length / entryPageSize));
   const safeEntryPage = Math.min(entryPage, entryTotalPages);
   const pagedEntries = useMemo(
@@ -229,6 +212,10 @@ export default function LexiconPage() {
     safeQuestionIndex,
     sessionFinished,
   ]);
+
+  useEffect(() => {
+    setEntryPage(1);
+  }, [entryPageSize, lexiconFilter]);
 
   function toggleTaskScope(taskId: string) {
     setScopeAllTasks(false);
@@ -318,7 +305,7 @@ export default function LexiconPage() {
     deleteTask(taskId);
   }
 
-  function confirmDeleteEntry(entryId: string, vocabulary: string) {
+  function confirmDeleteEntry(taskId: string, entryId: string, vocabulary: string) {
     if (typeof window !== "undefined") {
       const shouldDelete = window.confirm(`确认删除单词「${vocabulary}」吗？删除后无法恢复。`);
       if (!shouldDelete) {
@@ -326,9 +313,7 @@ export default function LexiconPage() {
       }
     }
 
-    if (selectedTask) {
-      deleteEntry({ taskId: selectedTask.id, entryId });
-    }
+    deleteEntry({ taskId, entryId });
   }
 
   function handleAnswer(result: DictationResult) {
@@ -436,103 +421,116 @@ export default function LexiconPage() {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-6 xl:grid-cols-[320px_1fr]">
+      <div className="grid gap-6">
         <GlassCard className="p-5 sm:p-6">
           <div className="flex items-center gap-2 text-sm uppercase tracking-[0.25em] text-stone-500">
             <Headphones className="h-4 w-4" />
             识别任务
           </div>
-          <h3 className="mt-3 text-lg font-semibold text-stone-900 sm:text-2xl">任务库</h3>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setScopeAllTasks(true);
-                setSelectedTaskIds(tasks.map((task) => task.id));
-                resetDictationState();
-              }}
-              className={`rounded-full px-3 py-1.5 text-xs ${
-                scopeAllTasks
-                  ? "bg-stone-900 text-white"
-                  : "border border-stone-200 bg-white text-stone-700"
-              }`}
-            >
-              全部任务
-            </button>
-            <div className="rounded-full border border-white/70 bg-white/80 px-3 py-1.5 text-xs text-stone-600">
-              当前听写范围：{activeTaskIds.length} 个任务
+          <div className="mt-3 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="rounded-full border border-white/70 bg-white/80 px-3 py-1.5 text-xs text-stone-600">
+                当前听写范围：{activeTaskIds.length} 个任务
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setScopeAllTasks(true);
+                  setSelectedTaskIds(tasks.map((task) => task.id));
+                  resetDictationState();
+                }}
+                className={`rounded-full px-3 py-1.5 text-xs ${
+                  scopeAllTasks
+                    ? "bg-stone-900 text-white"
+                    : "border border-stone-200 bg-white text-stone-700"
+                }`}
+              >
+                听写使用全部任务
+              </button>
             </div>
-          </div>
 
-          <div className="mt-5 space-y-3">
-            {tasks.map((task) => {
-              const isActive = task.id === selectedTaskId;
-              const inScope = activeTaskIds.includes(task.id);
-
-              return (
-                <div
-                  key={task.id}
-                  className={`rounded-[24px] border px-4 py-4 transition ${
-                    isActive
-                      ? "border-stone-900 bg-stone-900 text-white"
-                      : "border-white/65 bg-white/70 text-stone-700 hover:bg-white"
+            <div className="-mx-1 overflow-x-auto pb-1">
+              <div className="flex w-max min-w-full gap-2 px-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLexiconFilter("all");
+                    setEntryPage(1);
+                  }}
+                  className={`rounded-full px-4 py-2 text-sm whitespace-nowrap transition ${
+                    lexiconFilter === "all"
+                      ? "bg-stone-900 text-white"
+                      : "border border-stone-200 bg-white text-stone-700"
                   }`}
                 >
+                  全部任务
+                </button>
+                {tasks.map((task) => (
                   <button
+                    key={task.id}
                     type="button"
                     onClick={() => {
+                      setLexiconFilter(task.id);
                       setSelectedTaskId(task.id);
                       setEntryPage(1);
                     }}
-                    className="w-full text-left"
+                    className={`rounded-full px-4 py-2 text-sm whitespace-nowrap transition ${
+                      lexiconFilter === task.id
+                        ? "bg-stone-900 text-white"
+                        : "border border-stone-200 bg-white text-stone-700"
+                    }`}
                   >
-                    <p className="font-medium">{task.name}</p>
-                    <p className={`mt-2 text-xs ${isActive ? "text-stone-300" : "text-stone-500"}`}>
-                      {task.source} · {task.entries.length} 条词汇
-                    </p>
+                    {task.name}
                   </button>
-                  <div className="mt-3 flex flex-wrap gap-2">
+                ))}
+              </div>
+            </div>
+
+            {activeLexiconTask ? (
+              <div className="rounded-[24px] border border-white/65 bg-white/80 px-4 py-4 text-stone-700">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0">
+                    <p className="break-all text-base font-semibold text-stone-900 sm:text-lg">
+                      {activeLexiconTask.name}
+                    </p>
+                    <p className="mt-1 text-xs text-stone-500 sm:text-sm">
+                      {activeLexiconTask.source} · {activeLexiconTask.entries.length} 条词汇
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => toggleTaskScope(task.id)}
+                      onClick={() => toggleTaskScope(activeLexiconTask.id)}
                       className={`rounded-full px-3 py-1.5 text-xs ${
-                        inScope
-                          ? isActive
-                            ? "bg-white/20 text-white"
-                            : "bg-stone-900 text-white"
-                          : isActive
-                            ? "border border-white/30 text-white"
-                            : "border border-stone-200 bg-white text-stone-700"
+                        activeTaskIds.includes(activeLexiconTask.id)
+                          ? "bg-stone-900 text-white"
+                          : "border border-stone-200 bg-white text-stone-700"
                       }`}
                     >
-                      {inScope ? "已加入听写范围" : "加入听写范围"}
+                      {activeTaskIds.includes(activeLexiconTask.id) ? "已加入听写范围" : "加入听写范围"}
                     </button>
                     <button
                       type="button"
-                      onClick={() => startRename(task.id, task.name)}
-                      className={`rounded-full px-3 py-1.5 text-xs ${
-                        isActive
-                          ? "bg-white/20 text-white"
-                          : "border border-stone-200 bg-white text-stone-700"
-                      }`}
+                      onClick={() => startRename(activeLexiconTask.id, activeLexiconTask.name)}
+                      className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
                     >
                       改名
                     </button>
                     <button
                       type="button"
-                      onClick={() => confirmDeleteTask(task.id, task.name)}
-                      className={`rounded-full px-3 py-1.5 text-xs ${
-                        isActive
-                          ? "bg-white/20 text-white"
-                          : "border border-stone-200 bg-white text-stone-700"
-                      }`}
+                      onClick={() => confirmDeleteTask(activeLexiconTask.id, activeLexiconTask.name)}
+                      className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700"
                     >
                       删除任务
                     </button>
                   </div>
                 </div>
-              );
-            })}
+              </div>
+            ) : (
+              <div className="rounded-[24px] border border-white/65 bg-white/80 px-4 py-4 text-sm leading-7 text-stone-600">
+                当前显示全部任务词条。左右滑动上方任务栏并点击某个任务后，下方会只显示该任务对应的单词。
+              </div>
+            )}
           </div>
 
           {editingTaskId ? (
@@ -572,10 +570,10 @@ export default function LexiconPage() {
               <div>
                 <p className="text-sm uppercase tracking-[0.25em] text-stone-500">当前任务词条</p>
                 <h2 className="mt-2 break-all text-[1.35rem] font-semibold leading-tight text-stone-900 sm:text-3xl">
-                  {selectedTask?.name ?? "未选择任务"}
+                  {activeLexiconTask?.name ?? "全部任务"}
                 </h2>
                 <p className="mt-3 max-w-2xl text-[13px] leading-7 text-stone-600 sm:text-sm sm:leading-8">
-                  当前任务可单独浏览、删除词条，也可以把多个任务组合成一次听写范围。
+                  词阁顶部已改成任务切换栏。点击顶部任务标签后，这里会同步展示对应任务下的词条。
                 </p>
               </div>
               <button
@@ -590,9 +588,12 @@ export default function LexiconPage() {
 
             <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3">
               {[
-                { label: "任务时间", value: selectedTask?.createdAt ?? "--" },
+                { label: "任务时间", value: activeLexiconTask?.createdAt ?? "--" },
                 { label: "词条数量", value: `${entries.length} 条` },
-                { label: "最新结果", value: latestSelectedTaskResult },
+                {
+                  label: "当前范围",
+                  value: activeLexiconTask ? "单任务" : `全部 ${tasks.length} 个任务`,
+                },
               ].map((item) => (
                 <div
                   key={item.label}
@@ -655,6 +656,11 @@ export default function LexiconPage() {
                 <div className="mt-6 grid gap-3 lg:grid-cols-2">
                   {pagedEntries.map((entry) => {
                     const quality = getRecognitionEntryQuality(entry);
+                    const displayChinese = resolveDisplayChinese(entry);
+                    const displayExample =
+                      !isLowQualityExample(entry.sentence, entry.example ?? "") && entry.example?.trim()
+                        ? entry.example.trim()
+                        : "";
 
                     return (
                     <div
@@ -664,12 +670,16 @@ export default function LexiconPage() {
                       <p className="break-words text-[clamp(1.02rem,3.8vw,1.35rem)] font-medium leading-snug text-stone-900 sm:text-[clamp(1.5rem,3vw,2rem)]">
                         {entry.vocabulary}
                       </p>
-                      <p className="mt-2 text-[12px] leading-5 text-stone-500 sm:text-sm sm:leading-6">
-                        {resolveDisplayChinese(entry)}
-                      </p>
-                      <p className="mt-2 break-words text-[12px] leading-5 text-stone-600 sm:text-sm sm:leading-6">
-                        {entry.example || " "}
-                      </p>
+                      {displayChinese ? (
+                        <p className="mt-2 text-[12px] leading-5 text-stone-500 sm:text-sm sm:leading-6">
+                          {displayChinese}
+                        </p>
+                      ) : null}
+                      {displayExample ? (
+                        <p className="mt-2 break-words text-[12px] leading-5 text-stone-600 sm:text-sm sm:leading-6">
+                          {displayExample}
+                        </p>
+                      ) : null}
                       <div className="mt-3 flex flex-wrap gap-2">
                         <button
                           type="button"
@@ -681,8 +691,8 @@ export default function LexiconPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => speakText(entry.example)}
-                          disabled={!entry.example}
+                          onClick={() => speakText(displayExample)}
+                          disabled={!displayExample}
                           className="inline-flex min-w-0 items-center gap-1 rounded-full border border-stone-200 bg-white px-2.5 py-1.5 text-[10px] text-stone-700 sm:gap-2 sm:px-3 sm:text-xs"
                         >
                           <Play className="h-3.5 w-3.5" />
@@ -691,7 +701,7 @@ export default function LexiconPage() {
                         {selectedTask ? (
                           <button
                             type="button"
-                            onClick={() => confirmDeleteEntry(entry.id, entry.vocabulary)}
+                            onClick={() => confirmDeleteEntry(entry.taskId, entry.id, entry.vocabulary)}
                             className="inline-flex min-w-0 items-center gap-1 rounded-full border border-stone-200 bg-white px-2.5 py-1.5 text-[10px] text-stone-700 sm:gap-2 sm:px-3 sm:text-xs"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -699,6 +709,11 @@ export default function LexiconPage() {
                           </button>
                         ) : null}
                       </div>
+                      {lexiconFilter === "all" ? (
+                        <div className="mt-3 text-[11px] text-stone-500">
+                          所属任务：{entry.taskName}
+                        </div>
+                      ) : null}
                     </div>
                   )})}
                 </div>

@@ -20,6 +20,7 @@ import { useAuraConfig } from "@/hooks/use-aura-config";
 import { useLearningTasks } from "@/hooks/use-learning-tasks";
 import {
   getRecognitionEntryQuality,
+  isLowQualityExample,
   isLowQualityChineseMeaning,
   isLowQualityTranslation,
 } from "@/lib/recognition-quality";
@@ -97,53 +98,27 @@ function stopEntryActionEvent(event: {
 function resolveDisplayChinese(entry: {
   vocabulary: string;
   chinese: string;
-  partOfSpeech?: string;
-  sentenceChinese?: string;
-  exampleChinese?: string;
 }) {
   if (!isLowQualityChineseMeaning(entry.vocabulary, entry.chinese)) {
     return entry.chinese;
   }
 
-  if (entry.sentenceChinese?.trim()) {
-    return entry.sentenceChinese.trim();
-  }
-
-  if (entry.exampleChinese?.trim()) {
-    return entry.exampleChinese.trim();
-  }
-
-  if (entry.chinese?.trim()) {
-    return entry.chinese.trim();
-  }
-
-  const partOfSpeech = entry.partOfSpeech?.toLowerCase() ?? "";
-  if (partOfSpeech.includes("proper")) {
-    return "专有名词";
-  }
-  if (partOfSpeech.includes("verb")) {
-    return "动词表达";
-  }
-  if (partOfSpeech.includes("noun")) {
-    return "名词性表达";
-  }
-  if (partOfSpeech.includes("adjective")) {
-    return "形容词表达";
-  }
-
-  return "固定表达";
+  return "";
 }
 
 function resolveSentenceChinese(entry: { sentenceChinese?: string }) {
-  return entry.sentenceChinese?.trim() || "原句翻译待补充";
+  const value = entry.sentenceChinese?.trim() ?? "";
+  return !isLowQualityTranslation(value) ? value : "";
 }
 
-function resolveExample(entry: { example?: string }) {
-  return entry.example?.trim() || "例句待补充";
+function resolveExample(entry: { sentence: string; example?: string }) {
+  const value = entry.example?.trim() ?? "";
+  return !isLowQualityExample(entry.sentence, value) ? value : "";
 }
 
 function resolveExampleChinese(entry: { exampleChinese?: string }) {
-  return entry.exampleChinese?.trim() || "例句翻译待补充";
+  const value = entry.exampleChinese?.trim() ?? "";
+  return !isLowQualityTranslation(value) ? value : "";
 }
 
 export default function ReadingPage() {
@@ -430,6 +405,10 @@ export default function ReadingPage() {
         <div className="mt-6 space-y-3 md:hidden">
           {pagedEntries.map((entry) => {
             const quality = getRecognitionEntryQuality(entry);
+            const displayChinese = resolveDisplayChinese(entry);
+            const sentenceChinese = resolveSentenceChinese(entry);
+            const example = resolveExample(entry);
+            const exampleChinese = resolveExampleChinese(entry);
 
             return (
               <div
@@ -468,31 +447,35 @@ export default function ReadingPage() {
                   <Languages className="h-3.5 w-3.5" />
                   原句发音
                 </button>
-                <div className="mt-4 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
-                  <p className="text-[11px] text-stone-500">中文意思</p>
-                  <p className="mt-1 text-sm leading-6 text-stone-700">
-                    {resolveDisplayChinese(entry)}
-                  </p>
-                </div>
-                <div className="mt-3 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
-                  <p className="text-[11px] text-stone-500">原句翻译</p>
-                  <p className="mt-1 text-sm leading-6 text-stone-700">{resolveSentenceChinese(entry)}</p>
-                </div>
-                <div className="mt-3 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
-                  <p className="text-[11px] text-stone-500">例句</p>
-                  <p className="mt-1 text-sm leading-6 text-stone-700">
-                    {resolveExample(entry)}
-                  </p>
-                </div>
-                <div className="mt-3 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
-                  <p className="text-[11px] text-stone-500">例句翻译</p>
-                  <p className="mt-1 text-sm leading-6 text-stone-700">{resolveExampleChinese(entry)}</p>
-                </div>
+                {displayChinese ? (
+                  <div className="mt-4 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
+                    <p className="text-[11px] text-stone-500">中文意思</p>
+                    <p className="mt-1 text-sm leading-6 text-stone-700">{displayChinese}</p>
+                  </div>
+                ) : null}
+                {sentenceChinese ? (
+                  <div className="mt-3 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
+                    <p className="text-[11px] text-stone-500">原句翻译</p>
+                    <p className="mt-1 text-sm leading-6 text-stone-700">{sentenceChinese}</p>
+                  </div>
+                ) : null}
+                {example ? (
+                  <div className="mt-3 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
+                    <p className="text-[11px] text-stone-500">例句</p>
+                    <p className="mt-1 text-sm leading-6 text-stone-700">{example}</p>
+                  </div>
+                ) : null}
+                {exampleChinese ? (
+                  <div className="mt-3 rounded-[18px] bg-[#fbf8f4] px-3 py-3">
+                    <p className="text-[11px] text-stone-500">例句翻译</p>
+                    <p className="mt-1 text-sm leading-6 text-stone-700">{exampleChinese}</p>
+                  </div>
+                ) : null}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => speakText(entry.example)}
-                    disabled={!entry.example}
+                    onClick={() => speakText(example)}
+                    disabled={!example}
                     className="inline-flex items-center gap-1 rounded-full bg-[#f3eadf] px-3 py-1.5 text-[11px] text-stone-800 disabled:opacity-40"
                   >
                     <Mic2 className="h-3.5 w-3.5" />
@@ -534,6 +517,10 @@ export default function ReadingPage() {
               <tbody>
                 {pagedEntries.map((entry) => {
                   const quality = getRecognitionEntryQuality(entry);
+                  const displayChinese = resolveDisplayChinese(entry);
+                  const sentenceChinese = resolveSentenceChinese(entry);
+                  const example = resolveExample(entry);
+                  const exampleChinese = resolveExampleChinese(entry);
 
                   return (
                   <tr key={entry.id} className="border-b border-stone-100 last:border-b-0">
@@ -578,20 +565,24 @@ export default function ReadingPage() {
                     </td>
                     <td className="px-4 py-4 align-top text-sm leading-7 text-stone-700">
                       <div className="max-w-[320px] space-y-2">
-                        <div>{resolveDisplayChinese(entry)}</div>
-                        <div className="text-stone-500">{resolveSentenceChinese(entry)}</div>
+                        {displayChinese ? <div>{displayChinese}</div> : null}
+                        {sentenceChinese ? (
+                          <div className="text-stone-500">{sentenceChinese}</div>
+                        ) : null}
                       </div>
                     </td>
                     <td className="px-4 py-4 align-top text-sm leading-7 text-stone-700">
                       <div className="flex flex-wrap items-start gap-3">
                         <div className="max-w-[460px]">
-                          <div>{resolveExample(entry)}</div>
-                          <div className="mt-2 text-stone-500">{resolveExampleChinese(entry)}</div>
+                          {example ? <div>{example}</div> : null}
+                          {exampleChinese ? (
+                            <div className="mt-2 text-stone-500">{exampleChinese}</div>
+                          ) : null}
                         </div>
                         <button
                           type="button"
-                          onClick={() => speakText(entry.example)}
-                          disabled={!entry.example}
+                          onClick={() => speakText(example)}
+                          disabled={!example}
                           className="inline-flex items-center gap-1 rounded-full bg-[#f3eadf] px-3 py-1.5 text-xs text-stone-800 disabled:opacity-40"
                         >
                           <Mic2 className="h-3.5 w-3.5" />
