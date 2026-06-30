@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
+  ChevronDown,
+  ChevronUp,
   CloudUpload,
   PencilLine,
   RefreshCcw,
@@ -560,6 +562,7 @@ export function LearningWorkspace() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState("");
   const [taskNameDraft, setTaskNameDraft] = useState("");
+  const [conversationCollapsed, setConversationCollapsed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const promptPreview = draft;
 
@@ -1243,6 +1246,22 @@ export function LearningWorkspace() {
         </div>
 
         <div className="min-w-0 max-w-full overflow-x-hidden rounded-[30px] border border-white/70 bg-[#fffdfa]/80 p-4 sm:p-5">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-stone-700">
+              <Bot className="h-4 w-4" />
+              AI 对话
+            </div>
+            <button
+              type="button"
+              onClick={() => setConversationCollapsed((current) => !current)}
+              className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-2 text-xs text-stone-700"
+            >
+              {conversationCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+              {conversationCollapsed ? "展开对话" : "收起对话"}
+            </button>
+          </div>
+
+          {!conversationCollapsed ? (
           <div className="space-y-4">
             <div className="flex min-w-0 items-start gap-3">
               <div className="mt-1 rounded-full bg-stone-900 p-2 text-white">
@@ -1297,6 +1316,11 @@ export function LearningWorkspace() {
               </div>
             ) : null}
           </div>
+          ) : (
+            <div className="rounded-[24px] border border-white/70 bg-white/80 px-4 py-4 text-sm text-stone-600">
+              AI 对话内容已收起。点击右上角“展开对话”可查看当前提示词、系统说明和 JSON Schema。
+            </div>
+          )}
 
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             {quickActions.map(({ label, icon: Icon }) => (

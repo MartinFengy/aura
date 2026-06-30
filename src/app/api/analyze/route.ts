@@ -5060,8 +5060,8 @@ export async function POST(request: Request) {
 
   const providerApiKey =
     selectedModelOption.provider === "agnes"
-      ? process.env.AGNES_API_KEY ?? process.env.ARK_API_KEY
-      : process.env.ARK_API_KEY ?? process.env.AGNES_API_KEY;
+      ? process.env.AGNES_API_KEY
+      : process.env.ARK_API_KEY;
   const providerBaseUrl =
     selectedModelOption.provider === "agnes"
       ? process.env.AGNES_BASE_URL ??
