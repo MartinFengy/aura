@@ -187,7 +187,7 @@ const promptModeLabel = "当前模式：直接使用你的提示词";
 function shouldMigrateLegacyPrompt(prompt: string) {
   const normalized = prompt.trim();
   if (!normalized) {
-    return true;
+    return false;
   }
 
   const hasNewSections =
@@ -561,10 +561,7 @@ export function LearningWorkspace() {
   const [editingTaskId, setEditingTaskId] = useState("");
   const [taskNameDraft, setTaskNameDraft] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const promptPreview =
-    selectedAction === "上传图片/文件"
-      ? draft || defaultAnalysisPrompt
-      : draft;
+  const promptPreview = draft;
 
   useEffect(() => {
     if (shouldMigrateLegacyPrompt(draft)) {
@@ -1399,6 +1396,7 @@ export function LearningWorkspace() {
                     setSavedAnalysisPrompt(nextValue);
                   }
                 }}
+                placeholder={selectedAction === "上传图片/文件" ? "请输入分析提示词" : "请输入要追加的词汇或短语"}
                 className="min-w-0 flex-1 bg-transparent outline-none"
               />
             </div>
