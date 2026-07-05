@@ -62,7 +62,11 @@ type LearningTasksContextValue = {
     entries: RecognitionTask["entries"];
     properNouns?: RecognitionTask["properNouns"];
     feishuLink?: string;
-  }) => RecognitionTask | null;
+  }) => {
+    task: RecognitionTask;
+    appendedCount: number;
+    updatedCount: number;
+  } | null;
   renameTask: (taskId: string, name: string) => void;
   deleteTask: (taskId: string) => void;
   deleteEntry: (params: { taskId: string; entryId: string }) => void;
@@ -267,8 +271,13 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [practiceHistory, setPracticeHistory] = useState<DictationSession[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  const tasksRef = useRef<RecognitionTask[]>([]);
   const pendingDeletedTaskIdsRef = useRef<Set<string>>(new Set());
   const pendingDeletedEntryIdsRef = useRef<Map<string, Set<string>>>(new Map());
+
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
 
   useEffect(() => {
     const browserClient = getSupabaseBrowserClient();
@@ -325,7 +334,7 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
-    async function hydrateData({ forceCloudRefresh = false } = {}) {
+    async function hydrateData() {
       const nextTasks = readStoredTasks(activeUserKey)
         .filter((task) => !pendingDeletedTaskIdsRef.current.has(task.id))
         .map((task) => filterTaskPendingDeletedEntries(task, pendingDeletedEntryIdsRef.current));
@@ -337,6 +346,7 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
           return;
         }
 
+        tasksRef.current = nextTasks;
         setTasks(nextTasks);
         setPracticeHistory(nextHistory);
         setSelectedTaskId((current) => resolveNextSelectedTaskId(current, nextTasks));
@@ -378,6 +388,7 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
         const resolvedTasks = mergedTasks;
         const resolvedHistory = mergedHistory;
 
+        tasksRef.current = resolvedTasks;
         setTasks(resolvedTasks);
         setPracticeHistory(resolvedHistory);
         setSelectedTaskId((current) => resolveNextSelectedTaskId(current, resolvedTasks));
@@ -402,6 +413,7 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
           return;
         }
 
+        tasksRef.current = nextTasks;
         setTasks(nextTasks);
         setPracticeHistory(nextHistory);
         setSelectedTaskId((current) => resolveNextSelectedTaskId(current, nextTasks));
@@ -413,12 +425,12 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
 
     const handleVisibilityRefresh = () => {
       if (document.visibilityState === "visible") {
-        void hydrateData({ forceCloudRefresh: true });
+        void hydrateData();
       }
     };
 
     const handleFocusRefresh = () => {
-      void hydrateData({ forceCloudRefresh: true });
+      void hydrateData();
     };
 
     window.addEventListener("focus", handleFocusRefresh);
@@ -527,7 +539,10 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
 
   function addTaskFromFile(fileName: string) {
     const task = createTaskFromUpload(fileName);
-    setTasks((current) => [task, ...current]);
+    const nextTasks = [task, ...tasksRef.current];
+    tasksRef.current = nextTasks;
+    setTasks(nextTasks);
+    writeStoredTasks(activeUserKey, nextTasks);
     setSelectedTaskId(task.id);
     const browserClient = getSupabaseBrowserClient();
     if (browserClient && cloudUserId) {
@@ -540,7 +555,10 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
 
   function addTaskFromAnalysis(task: RecognitionTask) {
     const sanitizedTask = sanitizeRecognitionTaskEntries(task);
-    setTasks((current) => [sanitizedTask, ...current]);
+    const nextTasks = [sanitizedTask, ...tasksRef.current];
+    tasksRef.current = nextTasks;
+    setTasks(nextTasks);
+    writeStoredTasks(activeUserKey, nextTasks);
     setSelectedTaskId(sanitizedTask.id);
     const browserClient = getSupabaseBrowserClient();
     if (browserClient && cloudUserId) {
@@ -558,42 +576,80 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
     properNouns?: RecognitionTask["properNouns"];
     feishuLink?: string;
   }) {
-    let nextTask: null | RecognitionTask = null;
-    setTasks((current) =>
-      current.map((task) => {
-        if (task.id !== params.taskId) {
-          return task;
-        }
+    const currentTask = tasksRef.current.find((task) => task.id === params.taskId) ?? null;
+    if (!currentTask) {
+      return null;
+    }
 
-        const existingKeys = new Set(
-          task.entries.map((entry) => `${entry.sentence}__${entry.vocabulary}`),
-        );
-        const mergedEntries = [
-          ...task.entries,
-          ...params.entries.filter(
-            (entry) => !existingKeys.has(`${entry.sentence}__${entry.vocabulary}`),
-          ),
-        ];
-        const existingProperNounKeys = new Set(
-          (task.properNouns ?? []).map((entry) => `${entry.sentence}__${entry.vocabulary}`),
-        );
-        const mergedProperNouns = [
-          ...(task.properNouns ?? []),
-          ...((params.properNouns ?? []).filter(
-            (entry) => !existingProperNounKeys.has(`${entry.sentence}__${entry.vocabulary}`),
-          ) as RecognitionTask["entries"]),
-        ];
+    let appendedCount = 0;
+    let updatedCount = 0;
 
-        nextTask = sanitizeRecognitionTaskEntries({
-          ...task,
-          rawText: [task.rawText, params.rawText].filter(Boolean).join("\n\n"),
-          feishuLink: params.feishuLink ?? task.feishuLink,
-          entries: mergedEntries,
-          properNouns: mergedProperNouns,
-        });
-        return nextTask;
-      }),
+    const incomingLearningEntries = params.entries ?? [];
+    const currentLearningEntries = [...currentTask.entries];
+    const learningEntryIndex = new Map(
+      currentLearningEntries.map((entry, index) => [
+        `${entry.sentence}__${entry.vocabulary}`,
+        index,
+      ]),
     );
+
+    for (const entry of incomingLearningEntries) {
+      const key = `${entry.sentence}__${entry.vocabulary}`;
+      const existingIndex = learningEntryIndex.get(key);
+      if (existingIndex === undefined) {
+        learningEntryIndex.set(key, currentLearningEntries.length);
+        currentLearningEntries.push(entry);
+        appendedCount += 1;
+        continue;
+      }
+
+      currentLearningEntries[existingIndex] = {
+        ...currentLearningEntries[existingIndex],
+        ...entry,
+      };
+      updatedCount += 1;
+    }
+
+    const incomingProperNouns = (params.properNouns ?? []) as RecognitionTask["entries"];
+    const currentProperNouns = [...(currentTask.properNouns ?? [])];
+    const properNounIndex = new Map(
+      currentProperNouns.map((entry, index) => [
+        `${entry.sentence}__${entry.vocabulary}`,
+        index,
+      ]),
+    );
+
+    for (const entry of incomingProperNouns) {
+      const key = `${entry.sentence}__${entry.vocabulary}`;
+      const existingIndex = properNounIndex.get(key);
+      if (existingIndex === undefined) {
+        properNounIndex.set(key, currentProperNouns.length);
+        currentProperNouns.push(entry);
+        appendedCount += 1;
+        continue;
+      }
+
+      currentProperNouns[existingIndex] = {
+        ...currentProperNouns[existingIndex],
+        ...entry,
+      };
+      updatedCount += 1;
+    }
+
+    const nextTask = sanitizeRecognitionTaskEntries({
+      ...currentTask,
+      rawText: [currentTask.rawText, params.rawText].filter(Boolean).join("\n\n"),
+      feishuLink: params.feishuLink ?? currentTask.feishuLink,
+      entries: currentLearningEntries,
+      properNouns: currentProperNouns,
+    });
+
+    const nextTasks = tasksRef.current.map((task) =>
+      task.id === params.taskId ? nextTask : task,
+    );
+    tasksRef.current = nextTasks;
+    setTasks(nextTasks);
+    writeStoredTasks(activeUserKey, nextTasks);
     setSelectedTaskId(params.taskId);
     const browserClient = getSupabaseBrowserClient();
     if (browserClient && cloudUserId && nextTask) {
@@ -602,7 +658,11 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    return nextTask;
+    return {
+      task: nextTask,
+      appendedCount,
+      updatedCount,
+    };
   }
 
   function replaceTaskEntries(params: {
@@ -612,19 +672,23 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
     properNouns?: RecognitionTask["properNouns"];
     keepCurrentSelection?: boolean;
   }) {
-    let nextTask: null | RecognitionTask = null;
-    setTasks((current) =>
-      current.map((task) =>
-        task.id === params.taskId
-          ? (nextTask = sanitizeRecognitionTaskEntries({
-              ...task,
-              rawText: params.rawText ?? task.rawText,
-              entries: params.entries,
-              properNouns: params.properNouns ?? task.properNouns ?? [],
-            }))
-          : task,
-      ),
+    const currentTask = tasksRef.current.find((task) => task.id === params.taskId) ?? null;
+    if (!currentTask) {
+      return;
+    }
+
+    const nextTask = sanitizeRecognitionTaskEntries({
+      ...currentTask,
+      rawText: params.rawText ?? currentTask.rawText,
+      entries: params.entries,
+      properNouns: params.properNouns ?? currentTask.properNouns ?? [],
+    });
+    const nextTasks = tasksRef.current.map((task) =>
+      task.id === params.taskId ? nextTask : task,
     );
+    tasksRef.current = nextTasks;
+    setTasks(nextTasks);
+    writeStoredTasks(activeUserKey, nextTasks);
     if (!params.keepCurrentSelection) {
       setSelectedTaskId(params.taskId);
     }
@@ -637,12 +701,18 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
   }
 
   function renameTask(taskId: string, name: string) {
-    let nextTask: null | RecognitionTask = null;
-    setTasks((current) =>
-      current.map((task) =>
-        task.id === taskId ? (nextTask = { ...task, name }) : task,
-      ),
+    const currentTask = tasksRef.current.find((task) => task.id === taskId) ?? null;
+    if (!currentTask) {
+      return;
+    }
+
+    const nextTask = { ...currentTask, name };
+    const nextTasks = tasksRef.current.map((task) =>
+      task.id === taskId ? nextTask : task,
     );
+    tasksRef.current = nextTasks;
+    setTasks(nextTasks);
+    writeStoredTasks(activeUserKey, nextTasks);
     const browserClient = getSupabaseBrowserClient();
     if (browserClient && cloudUserId && nextTask) {
       void upsertTaskToCloud(browserClient, cloudUserId, nextTask).catch((error) => {
@@ -653,14 +723,13 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
 
   function deleteTask(taskId: string) {
     pendingDeletedTaskIdsRef.current.add(taskId);
-    setTasks((current) => {
-      const next = current.filter((task) => task.id !== taskId);
-      writeStoredTasks(activeUserKey, next);
-      setSelectedTaskId((selected) =>
-        selected === taskId ? next[0]?.id ?? "" : selected,
-      );
-      return next;
-    });
+    const nextTasks = tasksRef.current.filter((task) => task.id !== taskId);
+    tasksRef.current = nextTasks;
+    setTasks(nextTasks);
+    writeStoredTasks(activeUserKey, nextTasks);
+    setSelectedTaskId((selected) =>
+      selected === taskId ? nextTasks[0]?.id ?? "" : selected,
+    );
     const browserClient = getSupabaseBrowserClient();
     if (browserClient && cloudUserId) {
       void deleteTaskFromCloud(browserClient, cloudUserId, taskId)
@@ -680,26 +749,24 @@ export function LearningTasksProvider({ children }: { children: ReactNode }) {
       params.taskId,
       new Set([...existingPendingEntryIds, params.entryId]),
     );
-    let nextTask: null | RecognitionTask = null;
-    setTasks((current) =>
-      {
-        const nextTasks = current.map((task) => {
-        if (task.id !== params.taskId) {
-          return task;
-        }
+    const currentTask = tasksRef.current.find((task) => task.id === params.taskId) ?? null;
+    if (!currentTask) {
+      return;
+    }
 
-        nextTask = {
-          ...task,
-          entries: task.entries.filter((entry) => entry.id !== params.entryId),
-          properNouns: (task.properNouns ?? []).filter((entry) => entry.id !== params.entryId),
-        };
-        return nextTask;
-        });
-
-        writeStoredTasks(activeUserKey, nextTasks);
-        return nextTasks;
-      },
+    const nextTask: RecognitionTask = {
+      ...currentTask,
+      entries: currentTask.entries.filter((entry) => entry.id !== params.entryId),
+      properNouns: (currentTask.properNouns ?? []).filter(
+        (entry) => entry.id !== params.entryId,
+      ),
+    };
+    const nextTasks = tasksRef.current.map((task) =>
+      task.id === params.taskId ? nextTask : task,
     );
+    tasksRef.current = nextTasks;
+    setTasks(nextTasks);
+    writeStoredTasks(activeUserKey, nextTasks);
     const browserClient = getSupabaseBrowserClient();
     if (browserClient && cloudUserId && nextTask) {
       void upsertTaskToCloud(browserClient, cloudUserId, nextTask)

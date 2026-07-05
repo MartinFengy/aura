@@ -149,6 +149,10 @@ export default function ReadingPage() {
     }
 
     const currentTaskId = selectedTask.id;
+    const originalEntriesSnapshot = JSON.stringify([
+      ...(selectedTask.entries ?? []),
+      ...(selectedTask.properNouns ?? []),
+    ]);
 
     const needsChineseRepair = [...(selectedTask.entries ?? []), ...(selectedTask.properNouns ?? [])].some(
       (entry) =>
@@ -162,6 +166,7 @@ export default function ReadingPage() {
     }
 
     repairingTaskIdsRef.current.add(selectedTask.id);
+    const controller = new AbortController();
 
     const formData = new FormData();
     formData.append("instructions", "请补全当前词条的中文意思、原句翻译、例句和例句翻译，保持原 sentence 和 vocabulary 不变。");
@@ -181,6 +186,7 @@ export default function ReadingPage() {
         const response = await fetch("/api/analyze", {
           method: "POST",
           body: formData,
+          signal: controller.signal,
         });
         const payload = (await response.json()) as {
           error?: string;
@@ -194,19 +200,48 @@ export default function ReadingPage() {
           return;
         }
 
+        const currentTask = tasks.find((task) => task.id === currentTaskId);
+        if (!currentTask) {
+          return;
+        }
+
+        const currentEntriesSnapshot = JSON.stringify([
+          ...(currentTask.entries ?? []),
+          ...(currentTask.properNouns ?? []),
+        ]);
+
+        // Avoid letting a stale repair request overwrite newer local edits
+        // such as delete-entry or append-entry actions.
+        if (currentEntriesSnapshot !== originalEntriesSnapshot) {
+          return;
+        }
+
+        const nextEntries = payload.entries;
+        const nextProperNouns = payload.properNouns;
+        if (!Array.isArray(nextEntries) && !Array.isArray(nextProperNouns)) {
+          return;
+        }
+
         replaceTaskEntries({
           taskId: currentTaskId,
-          rawText: payload.rawText ?? payload.cleanedText ?? selectedTask.rawText,
-          entries: payload.entries ?? selectedTask.entries,
-          properNouns: payload.properNouns ?? selectedTask.properNouns ?? [],
+          rawText: payload.rawText ?? payload.cleanedText ?? currentTask.rawText,
+          entries: nextEntries ?? currentTask.entries,
+          properNouns: nextProperNouns ?? currentTask.properNouns ?? [],
           keepCurrentSelection: true,
         });
-      } catch {
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
       } finally {
         repairingTaskIdsRef.current.delete(currentTaskId);
       }
     })();
-  }, [config.arkBaseUrl, config.arkModel, config.feishuLink, replaceTaskEntries, selectedTask]);
+
+    return () => {
+      controller.abort();
+    };
+  }, [config.arkBaseUrl, config.arkModel, config.feishuLink, replaceTaskEntries, selectedTask, tasks]);
 
   const totalPages = Math.max(1, Math.ceil(entries.length / pageSize));
   const currentPage = Math.min(page, totalPages);

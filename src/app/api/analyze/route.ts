@@ -5244,7 +5244,7 @@ export async function POST(request: Request) {
       const missingRequestedTerms = findMissingRequestedTerms(requestedTerms, requestedEntries);
       let supplementalEntries: StructuredEntry[] = [];
 
-      if (missingRequestedTerms.length > 0 && !existingRawText.trim()) {
+      if (missingRequestedTerms.length > 0) {
         supplementalEntries = await generateEntriesForRequestedTermsDirect({
           apiKey,
           baseUrl,
@@ -5334,12 +5334,26 @@ export async function POST(request: Request) {
       properNouns = filterEntriesToRequestedTerms(requestedTerms, properNouns);
 
       if (entries.length === 0 && properNouns.length === 0) {
-        return NextResponse.json(
-          {
-            error: "没有在当前原文中定位到你指定的词汇或短语，请换一个表达后再试。",
-          },
-          { status: 422 },
-        );
+        const directEntries = await generateEntriesForRequestedTermsDirect({
+          apiKey,
+          baseUrl,
+          model: apiModel,
+          requestedTerms,
+          instructions,
+        }).catch(() => [] as StructuredEntry[]);
+
+        if (directEntries.length > 0) {
+          entries = filterValidEntries(directEntries);
+          properNouns = [];
+          mode = "vision-fallback";
+        } else {
+          return NextResponse.json(
+            {
+              error: "没有在当前原文中定位到你指定的词汇或短语，也没能直接生成对应词条，请换一个表达后再试。",
+            },
+            { status: 422 },
+          );
+        }
       }
     }
 

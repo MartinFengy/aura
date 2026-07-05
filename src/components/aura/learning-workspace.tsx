@@ -295,7 +295,9 @@ function filterEntriesForRequestedTerms(
     return termVariants.some((variants) =>
       variants.some(
         (variant) =>
-          normalizedVocabulary.includes(variant) || variant.includes(normalizedVocabulary),
+          normalizedVocabulary === variant ||
+          normalizedVocabulary.includes(variant) ||
+          variant.includes(normalizedVocabulary),
       ),
     );
   });
@@ -1095,17 +1097,26 @@ export function LearningWorkspace() {
           }。`,
         );
       } else if (targetTaskId) {
-        const savedTask = appendAnalysisToTask({
+        const previousTaskCount = selectedTask ? countTaskEntries(selectedTask) : 0;
+        const appendResult = appendAnalysisToTask({
           taskId: targetTaskId,
           rawText: payload.rawText ?? payload.cleanedText,
           entries: combinedResolvedEntries,
           properNouns: [],
           feishuLink: payload.feishuLink ?? config.feishuLink,
         });
-        const savedCount = savedTask ? countTaskEntries(savedTask) : combinedResolvedEntries.length;
+        const appendedCount = appendResult
+          ? Math.max(
+              appendResult.appendedCount,
+              countTaskEntries(appendResult.task) - previousTaskCount,
+            )
+          : 0;
+        const updatedCount = appendResult?.updatedCount ?? 0;
         setQueuedFiles([]);
         setStatusMessage(
-          `分析完成，已生成 ${savedCount} 条词汇/短语${
+          `分析完成，已追加 ${appendedCount} 条词汇/短语${
+            updatedCount > 0 ? `，并更新了 ${updatedCount} 条已有词条` : ""
+          }${
             targetTaskName ? `，已追加到「${targetTaskName}」` : ""
           }。文本模型：${payload.effectiveModel ?? config.arkModel}${
             payload.resolvedModelId ? ` / ${payload.resolvedModelId}` : ""
