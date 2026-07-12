@@ -11,6 +11,9 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+const DIRECT_IMAGE_MODEL_TIMEOUT_MS = 65000;
+const FAST_TRANSCRIPT_FALLBACK_TIMEOUT_MS = 18000;
+
 type ArkResponse = {
   choices?: Array<{
     message?: {
@@ -2966,7 +2969,7 @@ function buildRawTranscriptCandidateEntries(params: {
     }
   }
 
-  let entries = filterDisplayEntries(candidates);
+  const entries = filterDisplayEntries(candidates);
   const coveredSentenceKeys = new Set(entries.map((entry) => normalizeSentence(entry.sentence)));
 
   for (const sentence of sentences) {
@@ -3620,6 +3623,7 @@ async function extractTextFromImageWithModel(params: {
   buffer: Buffer;
   fileType: string;
   coverageMode?: "default" | "exhaustive";
+  timeoutMs?: number;
 }) {
   const base64 = params.buffer.toString("base64");
   const imageUrl = `data:${params.fileType || "image/png"};base64,${base64}`;
@@ -3627,7 +3631,7 @@ async function extractTextFromImageWithModel(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: 90000,
+    timeoutMs: params.timeoutMs ?? 90000,
     messages: [
       {
         role: "system",
@@ -3748,6 +3752,7 @@ async function analyzeImageWithModel(params: {
   fileType: string;
   instructions?: string;
   existingEntries?: RecognitionEntry[];
+  timeoutMs?: number;
 }) {
   const base64 = params.buffer.toString("base64");
   const imageUrl = `data:${params.fileType || "image/png"};base64,${base64}`;
@@ -3759,7 +3764,7 @@ async function analyzeImageWithModel(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: 110000,
+    timeoutMs: params.timeoutMs ?? 110000,
     messages: [
       {
         role: "system",
@@ -4394,42 +4399,94 @@ async function analyzeImageFilesDirectly(params: {
       params.files.map(async (file, index) => {
         const bytes = await file.arrayBuffer();
         const buffer = Buffer.from(bytes);
-        const payload = await analyzeImageWithModel({
-          apiKey: params.apiKey,
-          baseUrl: params.baseUrl,
-          model: params.model,
-          buffer,
-          fileType: file.type,
-          instructions: params.instructions,
-          existingEntries: [],
-        });
+        let transcript = "";
+        let entries: StructuredEntry[] = [];
+        let properNouns: StructuredEntry[] = [];
+        let diagnostics = {
+          fileName: file.name,
+          image: params.imageMetadata?.[index] ?? null,
+          ocr: null,
+          visionDefault: null as null | ImageStageDiagnostics,
+          visionExhaustive: null as null | ImageStageDiagnostics,
+          mergedTranscript: null as null | ImageStageDiagnostics,
+          extractionMethod: "vision" as const,
+        };
 
-        const transcript = cleanTranscript(payload.cleanedText ?? "");
-        const entries = dedupeLearningEntries(
-          getLearningEntriesFromStructuredPayload(payload as TranscriptStructuredPayload).map((entry) =>
-            applyLearningEntryDefaults(entry),
-          ),
-        );
-        const properNouns = dedupeLearningEntries(
-          getProperNounsFromStructuredPayload(payload as TranscriptStructuredPayload).map((entry) =>
-            applyProperNounEntryDefaults(entry),
-          ),
-        );
+        try {
+          const payload = await analyzeImageWithModel({
+            apiKey: params.apiKey,
+            baseUrl: params.baseUrl,
+            model: params.model,
+            buffer,
+            fileType: file.type,
+            instructions: params.instructions,
+            existingEntries: [],
+            timeoutMs: DIRECT_IMAGE_MODEL_TIMEOUT_MS,
+          });
+
+          transcript = cleanTranscript(payload.cleanedText ?? "");
+          entries = dedupeLearningEntries(
+            getLearningEntriesFromStructuredPayload(payload as TranscriptStructuredPayload).map((entry) =>
+              applyLearningEntryDefaults(entry),
+            ),
+          );
+          properNouns = dedupeLearningEntries(
+            getProperNounsFromStructuredPayload(payload as TranscriptStructuredPayload).map((entry) =>
+              applyProperNounEntryDefaults(entry),
+            ),
+          );
+          diagnostics = {
+            ...diagnostics,
+            visionDefault: buildStageDiagnostics(payload.cleanedText ?? "", transcript),
+            mergedTranscript: buildStageDiagnostics(transcript, transcript),
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "未知错误";
+          const isTimeout =
+            message.includes("aborted due to timeout") ||
+            message.includes("The operation was aborted");
+
+          if (!isTimeout) {
+            throw error;
+          }
+
+          const transcriptPayload = await extractTextFromImageWithModel({
+            apiKey: params.apiKey,
+            baseUrl: params.baseUrl,
+            model: params.model,
+            buffer,
+            fileType: file.type,
+            coverageMode: "default",
+            timeoutMs: FAST_TRANSCRIPT_FALLBACK_TIMEOUT_MS,
+          }).catch(() => ({ rawContent: "", cleanedText: "" }));
+
+          transcript = cleanTranscript(transcriptPayload.cleanedText ?? "");
+          entries = transcript
+            ? buildDeterministicTranscriptFallbackEntries({
+                transcript,
+                existingEntries: [],
+                limit: Math.min(getDesiredEntryCount(transcript), 18),
+              }).map((entry) => applyLearningEntryDefaults(entry))
+            : [];
+          properNouns = [];
+          diagnostics = {
+            ...diagnostics,
+            visionDefault: buildStageDiagnostics(
+              transcriptPayload.rawContent ?? "",
+              transcriptPayload.cleanedText ?? "",
+            ),
+            mergedTranscript: transcript
+              ? buildStageDiagnostics(transcript, transcript)
+              : null,
+          };
+        }
 
         return {
           transcript,
           entries,
           properNouns,
           method: "vision" as const,
-          diagnostics: {
-            fileName: file.name,
-            image: params.imageMetadata?.[index] ?? null,
-            ocr: null,
-            visionDefault: buildStageDiagnostics(payload.cleanedText ?? "", transcript),
-            visionExhaustive: null,
-            mergedTranscript: buildStageDiagnostics(transcript, transcript),
-            extractionMethod: "vision" as const,
-          },
+          diagnostics,
         };
       }),
     );

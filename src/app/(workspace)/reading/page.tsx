@@ -19,7 +19,6 @@ import { LearningWorkspace } from "@/components/aura/learning-workspace";
 import { useAuraConfig } from "@/hooks/use-aura-config";
 import { useLearningTasks } from "@/hooks/use-learning-tasks";
 import {
-  getRecognitionEntryQuality,
   isLowQualityExample,
   isLowQualityChineseMeaning,
   isLowQualityTranslation,
@@ -119,6 +118,24 @@ function resolveExample(entry: { sentence: string; example?: string }) {
 function resolveExampleChinese(entry: { exampleChinese?: string }) {
   const value = entry.exampleChinese?.trim() ?? "";
   return !isLowQualityTranslation(value) ? value : "";
+}
+
+function buildEntryDisplayModel(entry: {
+  vocabulary: string;
+  sentence: string;
+  chinese: string;
+  sentenceChinese?: string;
+  example?: string;
+  exampleChinese?: string;
+  partOfSpeech?: string;
+  difficulty?: string;
+}) {
+  return {
+    displayChinese: resolveDisplayChinese(entry),
+    sentenceChinese: resolveSentenceChinese(entry),
+    example: resolveExample(entry),
+    exampleChinese: resolveExampleChinese(entry),
+  };
 }
 
 export default function ReadingPage() {
@@ -439,11 +456,12 @@ export default function ReadingPage() {
 
         <div className="mt-6 space-y-3 md:hidden">
           {pagedEntries.map((entry) => {
-            const quality = getRecognitionEntryQuality(entry);
-            const displayChinese = resolveDisplayChinese(entry);
-            const sentenceChinese = resolveSentenceChinese(entry);
-            const example = resolveExample(entry);
-            const exampleChinese = resolveExampleChinese(entry);
+            const {
+              displayChinese,
+              sentenceChinese,
+              example,
+              exampleChinese,
+            } = buildEntryDisplayModel(entry);
 
             return (
               <div
@@ -551,11 +569,12 @@ export default function ReadingPage() {
               </thead>
               <tbody>
                 {pagedEntries.map((entry) => {
-                  const quality = getRecognitionEntryQuality(entry);
-                  const displayChinese = resolveDisplayChinese(entry);
-                  const sentenceChinese = resolveSentenceChinese(entry);
-                  const example = resolveExample(entry);
-                  const exampleChinese = resolveExampleChinese(entry);
+                  const {
+                    displayChinese,
+                    sentenceChinese,
+                    example,
+                    exampleChinese,
+                  } = buildEntryDisplayModel(entry);
 
                   return (
                   <tr key={entry.id} className="border-b border-stone-100 last:border-b-0">
@@ -600,18 +619,34 @@ export default function ReadingPage() {
                     </td>
                     <td className="px-4 py-4 align-top text-sm leading-7 text-stone-700">
                       <div className="max-w-[320px] space-y-2">
-                        {displayChinese ? <div>{displayChinese}</div> : null}
+                        {displayChinese ? (
+                          <div>
+                            <div className="text-xs text-stone-500">中文意思</div>
+                            <div>{displayChinese}</div>
+                          </div>
+                        ) : null}
                         {sentenceChinese ? (
-                          <div className="text-stone-500">{sentenceChinese}</div>
+                          <div>
+                            <div className="text-xs text-stone-500">原句翻译</div>
+                            <div className="text-stone-500">{sentenceChinese}</div>
+                          </div>
                         ) : null}
                       </div>
                     </td>
                     <td className="px-4 py-4 align-top text-sm leading-7 text-stone-700">
                       <div className="flex flex-wrap items-start gap-3">
                         <div className="max-w-[460px]">
-                          {example ? <div>{example}</div> : null}
+                          {example ? (
+                            <div>
+                              <div className="text-xs text-stone-500">例句</div>
+                              <div>{example}</div>
+                            </div>
+                          ) : null}
                           {exampleChinese ? (
-                            <div className="mt-2 text-stone-500">{exampleChinese}</div>
+                            <div className="mt-2">
+                              <div className="text-xs text-stone-500">例句翻译</div>
+                              <div className="text-stone-500">{exampleChinese}</div>
+                            </div>
                           ) : null}
                         </div>
                         <button
