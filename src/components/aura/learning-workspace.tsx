@@ -939,8 +939,6 @@ export function LearningWorkspace() {
       formData.append("imageMetadata", JSON.stringify(imageMetadata));
       if (queuedFiles.length > 0) {
         formData.append("preferVision", "1");
-        formData.append("fastMode", "1");
-        formData.append("directJsonMode", "1");
       }
 
       const response = await fetch("/api/analyze", {
@@ -1139,6 +1137,113 @@ export function LearningWorkspace() {
     }
   }
 
+  async function expandSelectedTaskEntries() {
+    if (!selectedTask) {
+      setStatusMessage("请先选中一个已有任务，再继续补充更多词汇。");
+      return;
+    }
+
+    if (!selectedTask.rawText?.trim()) {
+      setStatusMessage("当前任务缺少可用原文，暂时无法继续扩充词汇。");
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setStatusMessage("正在基于当前任务全文重新识别更多词汇，请稍候...");
+
+    try {
+      const formData = new FormData();
+      formData.append(
+        "instructions",
+        (savedAnalysisPrompt.trim() || defaultAnalysisPrompt).trim(),
+      );
+      formData.append("feishuLink", config.feishuLink);
+      formData.append("arkBaseUrl", config.arkBaseUrl);
+      formData.append("arkModel", config.arkModel);
+      formData.append("existingRawText", selectedTask.rawText ?? "");
+      formData.append("existingEntries", JSON.stringify(selectedTask.entries ?? []));
+      formData.append("requestedTerms", JSON.stringify([]));
+      formData.append("directTermMode", "0");
+      formData.append("expandEntries", "1");
+
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        body: formData,
+      });
+
+      const payload = (await response.json()) as {
+        rawText?: string;
+        cleanedText?: string;
+        entries?: Array<{
+          id: string;
+          sentence: string;
+          vocabulary: string;
+          chinese: string;
+          example: string;
+          pronunciation: string;
+          partOfSpeech?: string;
+          sentenceChinese?: string;
+          exampleChinese?: string;
+          difficulty?: string;
+          category?: "learning" | "proper-noun";
+        }>;
+        properNouns?: Array<{
+          id: string;
+          sentence: string;
+          vocabulary: string;
+          chinese: string;
+          example: string;
+          pronunciation: string;
+          partOfSpeech?: string;
+          sentenceChinese?: string;
+          exampleChinese?: string;
+          difficulty?: string;
+          category?: "learning" | "proper-noun";
+        }>;
+        error?: string;
+        effectiveModel?: string;
+        effectiveVisionModel?: string;
+        resolvedModelId?: string;
+        resolvedVisionModelId?: string;
+      };
+
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error || "重新识别失败");
+      }
+
+      const combinedResolvedEntries = mergeAppendEntries(
+        payload.entries ?? [],
+        payload.properNouns ?? [],
+      );
+
+      const appendResult = appendAnalysisToTask({
+        taskId: selectedTask.id,
+        rawText: payload.rawText ?? payload.cleanedText ?? selectedTask.rawText,
+        entries: combinedResolvedEntries,
+        properNouns: [],
+        feishuLink: config.feishuLink,
+      });
+
+      const appendedCount = appendResult?.appendedCount ?? 0;
+      const updatedCount = appendResult?.updatedCount ?? 0;
+
+      setStatusMessage(
+        `重新识别完成，已追加 ${appendedCount} 条词汇/短语${
+          updatedCount > 0 ? `，并更新了 ${updatedCount} 条已有词条` : ""
+        }，已追加到「${selectedTask.name}」。文本模型：${payload.effectiveModel ?? config.arkModel}${
+          payload.resolvedModelId ? ` / ${payload.resolvedModelId}` : ""
+        }；图片识别：${payload.effectiveVisionModel ?? config.arkModel}${
+          payload.resolvedVisionModelId ? ` / ${payload.resolvedVisionModelId}` : ""
+        }。`,
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "重新识别失败，请稍后再试。";
+      setStatusMessage(errorMessage);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }
+
   return (
     <GlassCard className="p-5 sm:p-7">
       <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1221,6 +1326,19 @@ export function LearningWorkspace() {
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={expandSelectedTaskEntries}
+                      disabled={isAnalyzing}
+                      className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-700 disabled:opacity-60"
+                    >
+                      {isAnalyzing ? (
+                        <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCcw className="h-3.5 w-3.5" />
+                      )}
+                      重新识别更多词
+                    </button>
                     <button
                       type="button"
                       onPointerDown={stopTaskActionEvent}

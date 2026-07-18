@@ -9,9 +9,9 @@ import {
 } from "@/lib/recognition-quality";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 180;
 
-const DIRECT_IMAGE_MODEL_TIMEOUT_MS = 65000;
+const DIRECT_IMAGE_MODEL_TIMEOUT_MS = 130000;
 const FAST_TRANSCRIPT_FALLBACK_TIMEOUT_MS = 18000;
 
 type ArkResponse = {
@@ -40,6 +40,20 @@ type TranscriptStructuredPayload = {
   entries?: StructuredEntry[];
   learningEntries?: StructuredEntry[];
   properNouns?: StructuredEntry[];
+};
+
+type TranscriptExtractionPayload = {
+  cleanedText?: string;
+  learningEntries?: Array<{
+    sentence?: string;
+    vocabulary?: string;
+    partOfSpeech?: string;
+  }>;
+  properNouns?: Array<{
+    sentence?: string;
+    vocabulary?: string;
+    partOfSpeech?: string;
+  }>;
 };
 
 type OcrMethod = "vision" | "tesseract" | "hybrid";
@@ -761,6 +775,10 @@ function extractJsonPayload(content: unknown) {
   }
 
   return safeContent;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function normalizeEntries(entries: Array<Omit<RecognitionEntry, "id">>) {
@@ -2640,6 +2658,38 @@ function dedupeLearningEntries(entries: StructuredEntry[]) {
   });
 }
 
+function pruneContainedEntries(entries: StructuredEntry[]) {
+  return entries.filter((entry, index, current) => {
+    const sentence = normalizeSentence(entry.sentence);
+    const vocabulary = normalizeVocabulary(entry.vocabulary);
+    const lowerVocabulary = vocabulary.toLowerCase();
+    return !current.some((candidate, candidateIndex) => {
+      if (candidateIndex === index) {
+        return false;
+      }
+      const candidateSentence = normalizeSentence(candidate.sentence);
+      const candidateVocabulary = normalizeVocabulary(candidate.vocabulary);
+      const lowerCandidateVocabulary = candidateVocabulary.toLowerCase();
+      if (!candidateSentence || !candidateVocabulary) {
+        return false;
+      }
+      if (candidateSentence !== sentence) {
+        return false;
+      }
+      if (lowerCandidateVocabulary === lowerVocabulary) {
+        return false;
+      }
+      if (candidateVocabulary.length <= vocabulary.length) {
+        return false;
+      }
+      const bothLookLikeProperNouns =
+        isLikelyProperNounVocabulary(candidateVocabulary) &&
+        isLikelyProperNounVocabulary(vocabulary);
+      return bothLookLikeProperNouns && lowerCandidateVocabulary.includes(lowerVocabulary);
+    });
+  });
+}
+
 function countCoveredSentences(entries: StructuredEntry[]) {
   return new Set(entries.map((entry) => normalizeSentence(entry.sentence))).size;
 }
@@ -2739,6 +2789,27 @@ function keepDirectModelLearningEntries(entries: StructuredEntry[]) {
           vocabulary.length > 0 &&
           !isLowQualitySourceSentence(sentence) &&
           sentence.toLowerCase().includes(vocabulary.toLowerCase())
+        );
+      }),
+  );
+}
+
+function keepCandidateLearningEntries(entries: StructuredEntry[]) {
+  return dedupeLearningEntries(
+    entries
+      .map((entry) => applyLearningEntryDefaults(entry))
+      .filter((entry) => {
+        const sentence = normalizeSentence(entry.sentence);
+        const vocabulary = normalizeVocabulary(entry.vocabulary);
+        return (
+          sentence.length > 0 &&
+          vocabulary.length > 0 &&
+          !isLikelyProperNounVocabulary(vocabulary) &&
+          !isLowQualitySourceSentence(sentence) &&
+          sentence.toLowerCase().includes(vocabulary.toLowerCase()) &&
+          countWords(vocabulary) <= 10 &&
+          !isAwkwardHeuristicCandidate(vocabulary) &&
+          !isNarrativeClauseFragment(vocabulary)
         );
       }),
   );
@@ -3572,33 +3643,56 @@ async function callArkContent(params: {
   messages: Array<Record<string, unknown>>;
   timeoutMs?: number;
 }) {
-  const response = await fetch(`${params.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${params.apiKey}`,
-    },
-    signal: AbortSignal.timeout(params.timeoutMs ?? 110000),
-    body: JSON.stringify({
-      model: params.model,
-      temperature: 0.2,
-      messages: params.messages,
-    }),
-  });
+  let lastError: unknown;
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Doubao 分析失败：${errorText}`);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(`${params.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${params.apiKey}`,
+        },
+        signal: AbortSignal.timeout(params.timeoutMs ?? 130000),
+        body: JSON.stringify({
+          model: params.model,
+          temperature: 0.2,
+          messages: params.messages,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Doubao 分析失败：${errorText}`);
+      }
+
+      const payload = (await response.json()) as ArkResponse;
+      const content = payload.choices?.[0]?.message?.content;
+
+      if (!content) {
+        throw new Error("Doubao 没有返回有效内容。");
+      }
+
+      return content;
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+      const shouldRetry =
+        attempt === 0 &&
+        (message.includes("fetch failed") ||
+          message.includes("networkerror") ||
+          message.includes("econnreset") ||
+          message.includes("socket"));
+
+      if (!shouldRetry) {
+        throw error;
+      }
+
+      await sleep(800);
+    }
   }
 
-  const payload = (await response.json()) as ArkResponse;
-  const content = payload.choices?.[0]?.message?.content;
-
-  if (!content) {
-    throw new Error("Doubao 没有返回有效内容。");
-  }
-
-  return content;
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 async function callArkJson(params: {
@@ -3631,7 +3725,7 @@ async function extractTextFromImageWithModel(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: params.timeoutMs ?? 90000,
+    timeoutMs: params.timeoutMs ?? 120000,
     messages: [
       {
         role: "system",
@@ -3764,7 +3858,7 @@ async function analyzeImageWithModel(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: params.timeoutMs ?? 110000,
+    timeoutMs: params.timeoutMs ?? 130000,
     messages: [
       {
         role: "system",
@@ -3835,6 +3929,98 @@ ${existingVocabulary || "none"}
   });
 }
 
+async function extractImageEntriesFirstPassWithModel(params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  buffer: Buffer;
+  fileType: string;
+  instructions?: string;
+  existingEntries?: RecognitionEntry[];
+  appendOnly?: boolean;
+  timeoutMs?: number;
+}) {
+  const base64 = params.buffer.toString("base64");
+  const imageUrl = `data:${params.fileType || "image/png"};base64,${base64}`;
+  const existingVocabulary = (params.existingEntries ?? [])
+    .map((entry) => `${entry.vocabulary} (${entry.sentence})`)
+    .join("\n");
+
+  return callArkJson({
+    apiKey: params.apiKey,
+    baseUrl: params.baseUrl,
+    model: params.model,
+    timeoutMs: params.timeoutMs ?? 130000,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are an experienced English teacher extracting high-value learning units from English screenshots.",
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `
+Read the screenshot and return valid JSON only:
+{
+  "cleanedText": "string",
+  "learningEntries": [
+    {
+      "sentence": "string",
+      "vocabulary": "string",
+      "partOfSpeech": "string"
+    }
+  ],
+  "properNouns": [
+    {
+      "sentence": "string",
+      "vocabulary": "string",
+      "partOfSpeech": "string"
+    }
+  ]
+}
+
+Rules:
+1. Return JSON only. Do not wrap in markdown.
+2. cleanedText must restore the readable original English text from top to bottom.
+3. sentence must be one complete original sentence from the screenshot.
+4. vocabulary must appear verbatim inside sentence.
+5. First-round extraction only: do not generate Chinese meanings, sentence translations, examples, example translations, difficulty, or pronunciation here.
+6. learningEntries must be the main output. Prioritize collocations, advanced words, phrasal verbs, noun phrases, news expressions, and complete meaningful chunks.
+7. properNouns should only contain people, places, institutions, organizations, titles, products, or other named entities.
+8. Do not let properNouns crowd out learningEntries.
+9. For each dense sentence, try to extract 3 to 8 learningEntries before considering properNouns.
+10. Do not output full clauses or subject-predicate narration chunks such as "officials said", "media reported", "people were injured", "the captain is", or similar fragments.
+11. Prefer complete expressions over fragments. Do not output half phrases.
+12. Do not output overlapping entity fragments like "President Donald", "Donald Trump", and "President Donald Trump" at the same time. Keep the longest complete entity.
+13. If appendOnly is true, only return NEW items that do not duplicate the existing list.
+14. Pay attention to the lower half of long screenshots. Do not omit later sentences.
+15. Ignore browser chrome, timestamps, icons, logos, watermarks, floating buttons, and UI noise.
+
+appendOnly:
+${params.appendOnly ? "true" : "false"}
+
+User instructions:
+${params.instructions || "请先尽可能多提取高质量单词、固定搭配、短语动词、名词短语、新闻表达和专有名词。第一轮只负责抽取与还原原文，不要在这里补中文、例句和翻译。"}
+
+Existing entries to avoid duplicating:
+${existingVocabulary || "none"}
+            `.trim(),
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: imageUrl,
+            },
+          },
+        ],
+      },
+    ],
+  }) as Promise<TranscriptExtractionPayload>;
+}
+
 async function transcribeImageWithTesseract(buffer: Buffer) {
   const tesseractModule = (await import("tesseract.js")) as unknown as {
     createWorker?: (...args: unknown[]) => Promise<{
@@ -3890,7 +4076,7 @@ async function structureTranscript(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: 110000,
+    timeoutMs: 130000,
     messages: [
       {
         role: "system",
@@ -3939,6 +4125,10 @@ Rules:
 6. Put ordinary learning vocabulary in learningEntries.
 7. Put person names, place names, institutions, titles, organizations, and other named entities in properNouns.
 8. If appendOnly is true, only return NEW items that do not duplicate the existing list.
+9. For each information-rich sentence, extract multiple learningEntries before adding properNouns where possible.
+10. learningEntries should be the majority. Do not let properNouns crowd out useful words, collocations, noun phrases, or news expressions.
+11. Do not output overlapping proper nouns like "President Donald", "Donald Trump", and "President Donald Trump" at the same time. Keep the longest complete entity.
+12. Do not output narrative subject-predicate fragments such as "officials said", "media reported", or "people were injured".
 
 Text:
 ${params.transcript}
@@ -3955,6 +4145,84 @@ ${existingVocabulary || "none"}
       },
     ],
   });
+}
+
+async function extractTranscriptEntriesFirstPass(params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  transcript: string;
+  instructions?: string;
+  existingEntries?: RecognitionEntry[];
+  appendOnly?: boolean;
+}) {
+  const existingVocabulary = (params.existingEntries ?? [])
+    .map((entry) => `${entry.vocabulary} (${entry.sentence})`)
+    .join("\n");
+
+  return callArkJson({
+    apiKey: params.apiKey,
+    baseUrl: params.baseUrl,
+    model: params.model,
+    timeoutMs: 130000,
+    messages: [
+      {
+        role: "system",
+        content: "You are an experienced English teacher extracting high-value learning units from English news text.",
+      },
+      {
+        role: "user",
+        content: `
+Analyze the following English material and return valid JSON only:
+{
+  "cleanedText": "string",
+  "learningEntries": [
+    {
+      "sentence": "string",
+      "vocabulary": "string",
+      "partOfSpeech": "string"
+    }
+  ],
+  "properNouns": [
+    {
+      "sentence": "string",
+      "vocabulary": "string",
+      "partOfSpeech": "string"
+    }
+  ]
+}
+
+Rules:
+1. Return JSON only. Do not wrap in markdown.
+2. cleanedText should stay faithful to the provided text.
+3. sentence must be one complete original sentence from the provided text.
+4. vocabulary must appear verbatim inside sentence.
+5. First-round extraction only: do not spend effort generating Chinese meanings, sentence translations, examples, example translations, or pronunciation here.
+6. Focus on extracting as MANY high-value learning units as possible from each information-rich sentence.
+7. learningEntries must be the main output. Prioritize collocations, advanced words, phrasal verbs, noun phrases, news expressions, and complete meaningful chunks.
+8. properNouns should only contain people, places, institutions, organizations, titles, products, or other named entities.
+9. Do not let properNouns crowd out learningEntries.
+10. Prefer complete expressions over fragments. Do not output half phrases.
+11. Do not output narrative subject-predicate fragments such as "officials said", "media reported", "people were injured", "the captain is", or similar news narration chunks.
+12. Do not output overlapping entity fragments like "President Donald", "Donald Trump", and "President Donald Trump" at the same time. Keep the longest complete entity.
+13. For each dense sentence, try to extract 2 to 6 learningEntries before considering properNouns.
+14. If appendOnly is true, only return NEW items that do not duplicate the existing list.
+
+Text:
+${params.transcript}
+
+appendOnly:
+${params.appendOnly ? "true" : "false"}
+
+User instructions:
+${params.instructions || "请尽可能多提取高质量单词、固定搭配、短语动词、名词短语、新闻表达和专有名词，但第一轮只负责抽取，不要在这里补中文、例句和翻译。"}
+
+Existing entries to avoid duplicating:
+${existingVocabulary || "none"}
+        `.trim(),
+      },
+    ],
+  }) as Promise<TranscriptExtractionPayload>;
 }
 
 function getLearningEntriesFromStructuredPayload(payload: TranscriptStructuredPayload | null | undefined) {
@@ -4274,6 +4542,231 @@ async function enrichEntriesForImageTranscript(params: {
   return {
     entries: sortEntriesByTranscriptOrder(transcript, boostedLearningEntries),
     properNouns: properNouns.slice(0, 20),
+  };
+}
+
+function needsEntryDetailRepair(entry: StructuredEntry) {
+  return (
+    isLowQualityChineseMeaning(entry.vocabulary, entry.chinese) ||
+    sharedIsLowQualityExample(entry.sentence, entry.example) ||
+    !(entry.sentenceChinese ?? "").trim() ||
+    !(entry.exampleChinese ?? "").trim() ||
+    !(entry.partOfSpeech ?? "").trim()
+  );
+}
+
+async function completeLearningEntryDetails(params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  entries: StructuredEntry[];
+}) {
+  let mergedEntries = dedupeLearningEntries(
+    params.entries.map((entry) => applyLearningEntryDefaults(entry)),
+  );
+  const entriesNeedingRepair = mergedEntries.filter((entry) => needsEntryDetailRepair(entry));
+
+  if (entriesNeedingRepair.length > 0) {
+    const filledEntries = await fillCandidateEntriesWithModel({
+      apiKey: params.apiKey,
+      baseUrl: params.baseUrl,
+      model: params.model,
+      entries: entriesNeedingRepair,
+    }).catch(() => [] as StructuredEntry[]);
+
+    if (filledEntries.length > 0) {
+      mergedEntries = mergeEntryDetails(mergedEntries, filledEntries);
+    }
+  }
+
+  const repairedEntries = mergedEntries.filter((entry) => needsEntryDetailRepair(entry));
+  if (repairedEntries.length > 0) {
+    const repairedByModel = await repairEntriesWithModel({
+      apiKey: params.apiKey,
+      baseUrl: params.baseUrl,
+      model: params.model,
+      entries: repairedEntries,
+    }).catch(() => [] as StructuredEntry[]);
+
+    if (repairedByModel.length > 0) {
+      mergedEntries = mergeEntryDetails(mergedEntries, repairedByModel);
+    }
+  }
+
+  const entriesNeedingChineseMeaning = mergedEntries.filter((entry) =>
+    isLowQualityChineseMeaning(entry.vocabulary, entry.chinese),
+  );
+  if (entriesNeedingChineseMeaning.length > 0) {
+    const repairedChineseEntries = await repairChineseMeaningsWithModel({
+      apiKey: params.apiKey,
+      baseUrl: params.baseUrl,
+      model: params.model,
+      entries: entriesNeedingChineseMeaning,
+    }).catch(() => [] as StructuredEntry[]);
+
+    if (repairedChineseEntries.length > 0) {
+      mergedEntries = mergeEntryDetails(mergedEntries, repairedChineseEntries);
+    }
+  }
+
+  return ensureDisplayableEntryDetails(mergedEntries);
+}
+
+async function extractPrimaryEntriesFromTranscript(params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  transcript: string;
+  instructions?: string;
+  existingEntries?: RecognitionEntry[];
+  appendOnly?: boolean;
+  boost?: boolean;
+}) {
+  const transcript = cleanTranscript(params.transcript);
+  if (!transcript) {
+    return {
+      entries: [] as StructuredEntry[],
+      properNouns: [] as StructuredEntry[],
+    };
+  }
+
+  const extracted = await extractTranscriptEntriesFirstPass({
+    apiKey: params.apiKey,
+    baseUrl: params.baseUrl,
+    model: params.model,
+    transcript,
+    instructions: params.instructions,
+    existingEntries: params.existingEntries,
+    appendOnly: params.appendOnly,
+  }).catch(() => ({ learningEntries: [] as TranscriptExtractionPayload["learningEntries"], properNouns: [] as TranscriptExtractionPayload["properNouns"] }));
+
+  const extractedLearningEntries: StructuredEntry[] = (extracted.learningEntries ?? []).map((entry) => ({
+    sentence: normalizeSentence(entry.sentence ?? ""),
+    vocabulary: normalizeVocabulary(entry.vocabulary ?? ""),
+    chinese: "",
+    example: "",
+    partOfSpeech: normalizeSentence(entry.partOfSpeech ?? ""),
+    sentenceChinese: "",
+    exampleChinese: "",
+    difficulty: "",
+    pronunciation: "",
+    category: "learning" as const,
+  }));
+  const extractedProperNouns: StructuredEntry[] = (extracted.properNouns ?? []).map((entry) => ({
+    sentence: normalizeSentence(entry.sentence ?? ""),
+    vocabulary: normalizeVocabulary(entry.vocabulary ?? ""),
+    chinese: "",
+    example: "",
+    partOfSpeech: normalizeSentence(entry.partOfSpeech ?? "proper noun"),
+    sentenceChinese: "",
+    exampleChinese: "",
+    difficulty: "",
+    pronunciation: "",
+    category: "proper-noun" as const,
+  }));
+
+  let entries = keepCandidateLearningEntries(extractedLearningEntries);
+  let properNouns = keepDirectModelProperNouns(extractedProperNouns);
+
+  const sentenceCount = splitTranscriptSentences(transcript).length;
+  const targetLearningCount = params.boost
+    ? Math.min(Math.max(sentenceCount * 4, 24), 72)
+    : Math.min(Math.max(sentenceCount * 3, 16), 48);
+  const targetProperNounCount = params.boost
+    ? Math.min(Math.max(sentenceCount * 2, 8), 24)
+    : Math.min(Math.max(sentenceCount, 5), 16);
+
+  if (entries.length < targetLearningCount) {
+    const supplementalEntries = await supplementEntriesFromTranscript({
+      apiKey: params.apiKey,
+      baseUrl: params.baseUrl,
+      model: params.model,
+      transcript,
+      existingEntries: params.existingEntries,
+      currentEntries: [...entries, ...properNouns],
+      limit: Math.max(targetLearningCount - entries.length, 12),
+    }).catch(() => [] as StructuredEntry[]);
+
+    entries = keepCandidateLearningEntries([...entries, ...supplementalEntries]);
+  }
+
+  if (entries.length < Math.max(8, Math.floor(targetLearningCount * 0.7))) {
+    const deterministicEntries = buildRawTranscriptCandidateEntries({
+      transcript,
+      existingEntries: params.existingEntries,
+      currentEntries: entries,
+      limit: Math.max(targetLearningCount - entries.length, 12),
+    });
+    entries = keepCandidateLearningEntries([...entries, ...deterministicEntries]);
+  }
+
+  if (properNouns.length < targetProperNounCount) {
+    const supplementalProperNouns = await extractProperNounEntriesFromTranscript({
+      apiKey: params.apiKey,
+      baseUrl: params.baseUrl,
+      model: params.model,
+      transcript,
+      existingEntries: params.existingEntries,
+    }).catch(() => [] as StructuredEntry[]);
+
+    properNouns = keepDirectModelProperNouns([...properNouns, ...supplementalProperNouns]);
+  }
+
+  const learningEntryCoverage = countCoveredSentences(entries);
+  const needsLearningBoost =
+    entries.length < Math.max(sentenceCount * 2, 12) ||
+    learningEntryCoverage < Math.max(sentenceCount - 1, 2) ||
+    properNouns.length > entries.length;
+
+  if (needsLearningBoost) {
+    const boostedStructured = await extractTranscriptEntriesFirstPass({
+      apiKey: params.apiKey,
+      baseUrl: params.baseUrl,
+      model: params.model,
+      transcript,
+      instructions: `${params.instructions ?? ""}\n请重点补充 learningEntries，而不是继续堆专有名词。每个信息密集句至少尽量提取 2 个学习词条，优先抽取 collocations、noun phrases、news expressions、advanced verbs、adjectives、phrasal verbs。不要只返回国家、人名、地名。`,
+      existingEntries: params.existingEntries,
+      appendOnly: params.appendOnly,
+    }).catch(() => ({ learningEntries: [] as TranscriptExtractionPayload["learningEntries"], properNouns: [] as TranscriptExtractionPayload["properNouns"] }));
+
+    const boostedLearningEntries: StructuredEntry[] = (boostedStructured.learningEntries ?? []).map((entry) => ({
+      sentence: normalizeSentence(entry.sentence ?? ""),
+      vocabulary: normalizeVocabulary(entry.vocabulary ?? ""),
+      chinese: "",
+      example: "",
+      partOfSpeech: normalizeSentence(entry.partOfSpeech ?? ""),
+      sentenceChinese: "",
+      exampleChinese: "",
+      difficulty: "",
+      pronunciation: "",
+      category: "learning" as const,
+    }));
+    const boostedProperNouns: StructuredEntry[] = (boostedStructured.properNouns ?? []).map((entry) => ({
+      sentence: normalizeSentence(entry.sentence ?? ""),
+      vocabulary: normalizeVocabulary(entry.vocabulary ?? ""),
+      chinese: "",
+      example: "",
+      partOfSpeech: normalizeSentence(entry.partOfSpeech ?? "proper noun"),
+      sentenceChinese: "",
+      exampleChinese: "",
+      difficulty: "",
+      pronunciation: "",
+      category: "proper-noun" as const,
+    }));
+
+    entries = keepCandidateLearningEntries([
+      ...entries,
+      ...boostedLearningEntries,
+    ]);
+    properNouns = keepDirectModelProperNouns([
+      ...properNouns,
+      ...boostedProperNouns,
+    ]);
+  }
+
+  return {
+    entries: sortEntriesByTranscriptOrder(transcript, pruneContainedEntries(entries)),
+    properNouns: sortEntriesByTranscriptOrder(transcript, pruneContainedEntries(properNouns)).slice(0, 24),
   };
 }
 
@@ -4634,75 +5127,87 @@ async function analyzeImageFilesDirectly(params: {
       params.files.map(async (file, index) => {
         const bytes = await file.arrayBuffer();
         const buffer = Buffer.from(bytes);
-        const [vision, directVisionPayload] = await Promise.all([
-          extractTextFromImageWithAiFallback({
-            apiKey: params.apiKey,
-            baseUrl: params.baseUrl,
-            model: params.model,
-            buffer,
-            fileType: file.type,
-          }).catch(() => ({
-            transcript: "",
-            diagnostics: { default: null, exhaustive: null, merged: null },
+        const directVisionPayload = await extractImageEntriesFirstPassWithModel({
+          apiKey: params.apiKey,
+          baseUrl: params.baseUrl,
+          model: params.model,
+          buffer,
+          fileType: file.type,
+          instructions: params.instructions,
+          existingEntries: params.existingEntries,
+          timeoutMs: DIRECT_IMAGE_MODEL_TIMEOUT_MS,
+        }).catch(() => null);
+
+        const directTranscript = cleanTranscript(directVisionPayload?.cleanedText ?? "");
+        const directLearningEntries = keepDirectModelLearningEntries(
+          (directVisionPayload?.learningEntries ?? []).map((entry) => ({
+            sentence: normalizeSentence(entry.sentence ?? ""),
+            vocabulary: normalizeVocabulary(entry.vocabulary ?? ""),
+            chinese: "",
+            example: "",
+            partOfSpeech: normalizeSentence(entry.partOfSpeech ?? ""),
+            sentenceChinese: "",
+            exampleChinese: "",
+            difficulty: "",
+            pronunciation: "",
+            category: "learning" as const,
           })),
-          analyzeImageWithModel({
-            apiKey: params.apiKey,
-            baseUrl: params.baseUrl,
-            model: params.model,
-            buffer,
-            fileType: file.type,
-            instructions: params.instructions,
-            existingEntries: params.existingEntries,
-          }).catch(() => null),
-        ]);
-
-        const directTranscript = directVisionPayload?.cleanedText
-          ? cleanTranscript(directVisionPayload.cleanedText)
-          : "";
-        const mergedTranscript = mergeTranscriptVariants(vision.transcript, directTranscript);
-        const directEntries = filterValidEntries(
-          getLearningEntriesFromStructuredPayload(directVisionPayload as TranscriptStructuredPayload),
         );
-        const directProperNouns = filterProperNounEntries(
-          getProperNounsFromStructuredPayload(directVisionPayload as TranscriptStructuredPayload),
+        const directProperNouns = keepDirectModelProperNouns(
+          (directVisionPayload?.properNouns ?? []).map((entry) => ({
+            sentence: normalizeSentence(entry.sentence ?? ""),
+            vocabulary: normalizeVocabulary(entry.vocabulary ?? ""),
+            chinese: "",
+            example: "",
+            partOfSpeech: normalizeSentence(entry.partOfSpeech ?? "proper noun"),
+            sentenceChinese: "",
+            exampleChinese: "",
+            difficulty: "",
+            pronunciation: "",
+            category: "proper-noun" as const,
+          })),
         );
+        const directCoverage = countCoveredSentences(directLearningEntries);
+        const directSentenceCount = splitTranscriptSentences(directTranscript).length;
+        const needsTranscriptAssist =
+          !directTranscript ||
+          directSentenceCount <= 2 ||
+          directLearningEntries.length < Math.max(directSentenceCount * 2, 10) ||
+          directCoverage < Math.max(directSentenceCount - 1, 2);
 
-        if (mergedTranscript) {
-          const fallbackEntries = filterValidEntries(createFallbackEntries(mergedTranscript));
-          return {
-            transcript: mergedTranscript,
-            entries:
-              params.fastMode
-                ? filterValidEntries(directEntries)
-                : directEntries.length > 0
-                  ? filterValidEntries([...directEntries, ...fallbackEntries])
-                  : fallbackEntries,
-            properNouns: directProperNouns,
-            method: "vision" as const,
-            diagnostics: {
-              fileName: file.name,
-              image: params.imageMetadata?.[index] ?? null,
-              ocr: null,
-              visionDefault: vision.diagnostics.default,
-              visionExhaustive: vision.diagnostics.exhaustive,
-              mergedTranscript: buildStageDiagnostics(mergedTranscript, mergedTranscript),
-              extractionMethod: "vision" as const,
-            },
-          };
-        }
+        const vision = needsTranscriptAssist
+          ? await extractTextFromImageWithAiFallback({
+              apiKey: params.apiKey,
+              baseUrl: params.baseUrl,
+              model: params.model,
+              buffer,
+              fileType: file.type,
+            }).catch(() => ({
+              transcript: "",
+              diagnostics: { default: null, exhaustive: null, merged: null },
+            }))
+          : {
+              transcript: "",
+              diagnostics: { default: null, exhaustive: null, merged: null },
+            };
 
+        const mergedTranscript = mergeTranscriptVariants(directTranscript, vision.transcript);
         return {
-          transcript: "",
-          entries: [],
-          properNouns: [] as StructuredEntry[],
+          transcript: mergedTranscript,
+          entries: directLearningEntries,
+          properNouns: directProperNouns,
           method: "vision" as const,
           diagnostics: {
             fileName: file.name,
             image: params.imageMetadata?.[index] ?? null,
             ocr: null,
-            visionDefault: vision.diagnostics.default,
+            visionDefault:
+              buildStageDiagnostics(
+                directVisionPayload?.cleanedText ?? "",
+                directTranscript,
+              ) ?? vision.diagnostics.default,
             visionExhaustive: vision.diagnostics.exhaustive,
-            mergedTranscript: null,
+            mergedTranscript: buildStageDiagnostics(mergedTranscript, mergedTranscript),
             extractionMethod: "vision" as const,
           },
         };
@@ -4727,42 +5232,52 @@ async function analyzeImageFilesDirectly(params: {
         .filter(Boolean)
         .join("\n\n") || mergedTranscriptFromEntries,
     );
-    const seedEntries = mergedTranscript
-      ? params.fastMode
-        ? dedupeLearningEntries(filterDisplayEntries(validResults.flatMap((item) => item.entries)))
-        : filterDisplayEntries([
-            ...validResults.flatMap((item) => item.entries),
-            ...buildRawTranscriptCandidateEntries({
-              transcript: mergedTranscript,
-              existingEntries: params.existingEntries,
-              limit: Math.min(getDesiredEntryCount(mergedTranscript), 32),
-            }),
-          ])
-      : [];
-    const enriched = mergedTranscript
-      ? params.fastMode
-        ? {
-            entries: sortEntriesByTranscriptOrder(
-              mergedTranscript,
-              dedupeLearningEntries(seedEntries),
-            ),
-            properNouns: filterProperNounEntries(validResults.flatMap((item) => item.properNouns)),
-          }
-        : await enrichEntriesForImageTranscript({
+    const directSeedEntries = dedupeLearningEntries(validResults.flatMap((item) => item.entries));
+    const directSeedProperNouns = dedupeLearningEntries(
+      validResults.flatMap((item) => item.properNouns),
+    );
+    const sentenceCount = splitTranscriptSentences(mergedTranscript).length;
+    const directSeedCoverage = countCoveredSentences(directSeedEntries);
+    const directSeedLooksEnough =
+      directSeedEntries.length >= Math.max(sentenceCount * 2, 10) &&
+      directSeedCoverage >= Math.max(sentenceCount - 1, 2);
+
+    const extracted =
+      mergedTranscript && !directSeedLooksEnough
+        ? await extractPrimaryEntriesFromTranscript({
             apiKey: params.apiKey,
             baseUrl: params.baseUrl,
             model: params.model,
             transcript: mergedTranscript,
             instructions: params.instructions,
             existingEntries: params.existingEntries,
-            seedEntries,
+            appendOnly: false,
+            boost: true,
           })
-      : {
-          entries: filterDisplayEntries(validResults.flatMap((item) => item.entries)),
-          properNouns: filterProperNounEntries(validResults.flatMap((item) => item.properNouns)),
-        };
-    const entries = enriched.entries;
-    const properNouns = enriched.properNouns;
+        : {
+            entries: [] as StructuredEntry[],
+            properNouns: [] as StructuredEntry[],
+          };
+    const entries = sortEntriesByTranscriptOrder(
+      mergedTranscript,
+      keepCandidateLearningEntries(
+        pruneContainedEntries(
+          directSeedLooksEnough
+            ? directSeedEntries
+            : [...directSeedEntries, ...extracted.entries],
+        ),
+      ),
+    );
+    const properNouns = sortEntriesByTranscriptOrder(
+      mergedTranscript,
+      keepDirectModelProperNouns(
+        pruneContainedEntries(
+          directSeedLooksEnough
+            ? directSeedProperNouns
+            : [...directSeedProperNouns, ...extracted.properNouns],
+        ),
+      ),
+    ).slice(0, 24);
 
     if (!mergedTranscript && entries.length === 0 && properNouns.length === 0) {
       return fallbackToOcrTranscript();
@@ -4777,7 +5292,7 @@ async function analyzeImageFilesDirectly(params: {
       ocrSentenceCount: splitTranscriptSentences(mergedTranscript).length,
       aiInputLength: mergedTranscript.length,
       aiInputSentenceCount: splitTranscriptSentences(mergedTranscript).length,
-      aiSeedEntryCount: seedEntries.length,
+      aiSeedEntryCount: entries.length,
       aiOutputCount: entries.length,
       finalDisplayCount: entries.length,
       ...summarizeSentenceCoverage(mergedTranscript, entries),
@@ -4861,27 +5376,23 @@ async function analyzeImageFilesDirectly(params: {
     let properNouns: StructuredEntry[] = [];
     let seedEntryCount = 0;
     if (mergedTranscript) {
-      const seedEntries = buildRawTranscriptCandidateEntries({
-        transcript: mergedTranscript,
-        existingEntries: params.existingEntries,
-        limit: Math.min(getDesiredEntryCount(mergedTranscript), 32),
-      });
-      seedEntryCount = seedEntries.length;
-      const enrichedSeedEntries = await enrichDisplayEntriesWithModel({
+      const extracted = await extractPrimaryEntriesFromTranscript({
         apiKey: params.apiKey,
         baseUrl: params.baseUrl,
         model: params.model,
-        entries: seedEntries,
-      }).catch(() => [] as StructuredEntry[]);
+        transcript: mergedTranscript,
+        instructions: params.instructions,
+        existingEntries: params.existingEntries,
+        appendOnly: Boolean(params.existingEntries?.length),
+        boost: false,
+      }).catch(() => ({
+        entries: [] as StructuredEntry[],
+        properNouns: [] as StructuredEntry[],
+      }));
 
-      entries = enrichedSeedEntries.length > 0 ? enrichedSeedEntries : seedEntries;
-      properNouns = await extractProperNounEntriesFromTranscript({
-        apiKey: params.apiKey,
-        baseUrl: params.baseUrl,
-        model: params.model,
-        transcript: mergedTranscript,
-        existingEntries: params.existingEntries,
-      }).catch(() => [] as StructuredEntry[]);
+      entries = extracted.entries;
+      properNouns = extracted.properNouns;
+      seedEntryCount = entries.length;
     }
 
     const method = transcripts.some((item) => item.method === "hybrid")
@@ -4957,7 +5468,7 @@ async function analyzeImageFilesDirectly(params: {
         let structuredEntries: StructuredEntry[] = [];
         let structuredProperNouns: StructuredEntry[] = [];
         if (transcript && transcript !== "EMPTY") {
-          const structured = await structureTranscript({
+          const extracted = await extractPrimaryEntriesFromTranscript({
             apiKey: params.apiKey,
             baseUrl: params.baseUrl,
             model: params.model,
@@ -4965,45 +5476,13 @@ async function analyzeImageFilesDirectly(params: {
             instructions: params.instructions,
             existingEntries: params.existingEntries,
             appendOnly: Boolean(params.existingEntries?.length),
-          }).catch(() => ({ learningEntries: [] as StructuredEntry[], properNouns: [] as StructuredEntry[] }));
+          }).catch(() => ({
+            entries: [] as StructuredEntry[],
+            properNouns: [] as StructuredEntry[],
+          }));
 
-          structuredEntries = filterValidEntries(getLearningEntriesFromStructuredPayload(structured));
-          structuredProperNouns = filterProperNounEntries(getProperNounsFromStructuredPayload(structured));
-
-          const desiredEntryCount = getDesiredEntryCount(transcript);
-          const desiredProperNounCount = Math.min(
-            Math.max(Math.ceil(splitTranscriptSentences(transcript).length * 1.5), 6),
-            24,
-          );
-          const coveredSentences = countCoveredSentences(structuredEntries);
-          const sentenceCount = splitTranscriptSentences(transcript).length;
-          if (
-            structuredEntries.length < desiredEntryCount ||
-            coveredSentences < sentenceCount
-          ) {
-            const supplementalEntries = await supplementEntriesFromTranscript({
-              apiKey: params.apiKey,
-              baseUrl: params.baseUrl,
-              model: params.model,
-              transcript,
-              existingEntries: params.existingEntries,
-              currentEntries: structuredEntries,
-              limit: Math.max(desiredEntryCount - structuredEntries.length, 10),
-            });
-            structuredEntries = filterValidEntries([...structuredEntries, ...supplementalEntries]);
-          }
-
-          if (structuredProperNouns.length < desiredProperNounCount) {
-            structuredProperNouns = filterProperNounEntries([
-              ...structuredProperNouns,
-              ...buildProperNounFallbackEntries({
-                transcript,
-                existingEntries: params.existingEntries,
-                currentEntries: structuredProperNouns,
-                limit: desiredProperNounCount,
-              }),
-            ]);
-          }
+          structuredEntries = extracted.entries;
+          structuredProperNouns = extracted.properNouns;
         }
 
         return {
@@ -5074,6 +5553,7 @@ export async function POST(request: Request) {
   const directJsonMode = String(formData.get("directJsonMode") || "") === "1";
   const directTermMode = String(formData.get("directTermMode") || "") === "1";
   const stage2Enrich = String(formData.get("stage2Enrich") || "") === "1";
+  const expandEntries = String(formData.get("expandEntries") || "") === "1";
   const sourceFileName = String(formData.get("sourceFileName") || "").trim();
   const requestedTermsRaw = String(formData.get("requestedTerms") || "[]");
   const existingEntriesRaw = String(formData.get("existingEntries") || "[]");
@@ -5159,6 +5639,7 @@ export async function POST(request: Request) {
     let properNouns: StructuredEntry[] = [];
     let mode: "vision" | "vision-fallback" = "vision";
     let effectiveModelOptionForResponse = selectedModelOption;
+    let deferStage2Enrichment = false;
     let diagnostics: AnalysisDiagnostics = {
       imageCount: files.length,
       images: imageMetadata,
@@ -5195,6 +5676,22 @@ export async function POST(request: Request) {
         .map((entry) => applyProperNounEntryDefaults(entry));
       mode = "vision-fallback";
       ocrMethod = "vision";
+    } else if (expandEntries && existingRawText.trim()) {
+      transcript = cleanTranscript(existingRawText);
+      cleanedText = transcript;
+      const expanded = await extractPrimaryEntriesFromTranscript({
+        apiKey,
+        baseUrl,
+        model: apiModel,
+        transcript,
+        instructions: `${instructions || ""}\n请继续逐句检查全文，补充更多高质量单词、短语、固定搭配和专有名词。只返回新增词条，不要重复已有词条，不要返回普通主谓叙述片段。`,
+        existingEntries,
+        appendOnly: true,
+        boost: true,
+      });
+      entries = expanded.entries;
+      properNouns = expanded.properNouns;
+      mode = "vision-fallback";
     } else if (directTermMode && requestedTerms.length > 0) {
       const directEntries = await generateEntriesForRequestedTermsDirect({
         apiKey,
@@ -5224,26 +5721,16 @@ export async function POST(request: Request) {
       });
       transcript = analysis.rawText;
       cleanedText = analysis.rawText;
-      entries = directJsonMode
-        ? sortEntriesByTranscriptOrder(
-            analysis.rawText,
-            dedupeLearningEntries(
-              (analysis.entries ?? []).map((entry) => applyLearningEntryDefaults(entry)),
-            ),
-          )
-        : sortEntriesByTranscriptOrder(
-            analysis.rawText,
-            dedupeLearningEntries(
-              filterDisplayEntries(
-                analysis.entries,
-              ),
-            ),
-          );
-      properNouns = directJsonMode
-        ? dedupeLearningEntries(
-            (analysis.properNouns ?? []).map((entry) => applyProperNounEntryDefaults(entry)),
-          )
-        : filterProperNounEntries(analysis.properNouns ?? []);
+      entries = sortEntriesByTranscriptOrder(
+        analysis.rawText,
+        dedupeLearningEntries(
+          (analysis.entries ?? []).map((entry) => applyLearningEntryDefaults(entry)),
+        ),
+      );
+      properNouns = dedupeLearningEntries(
+        (analysis.properNouns ?? []).map((entry) => applyProperNounEntryDefaults(entry)),
+      );
+      deferStage2Enrichment = true;
       ocrMethod = analysis.method;
       diagnostics = analysis.diagnostics;
       fileName =
@@ -5366,7 +5853,7 @@ export async function POST(request: Request) {
       }
     }
 
-    if (files.length === 0 && entries.length === 0 && !isAppendRequest && !stage2Enrich) {
+    if (files.length === 0 && entries.length === 0 && !isAppendRequest && !stage2Enrich && !expandEntries) {
       try {
         const enrichedTranscriptResult = await enrichEntriesForImageTranscript({
           apiKey,
@@ -5496,32 +5983,13 @@ export async function POST(request: Request) {
       }).catch(() => properNouns);
     }
 
-    if (entries.length > 0 && !directJsonMode) {
-      const incompleteLearningEntries = entries.filter(
-        (entry) =>
-          isLowQualityChineseMeaning(entry.vocabulary, entry.chinese) ||
-          sharedIsLowQualityExample(entry.sentence, entry.example) ||
-          !(entry.sentenceChinese ?? "").trim() ||
-          !(entry.exampleChinese ?? "").trim() ||
-          !(entry.partOfSpeech ?? "").trim(),
-      );
-
-      if (incompleteLearningEntries.length > 0) {
-        const repairedLearningEntries = await repairEntriesWithModel({
-          apiKey,
-          baseUrl,
-          model: apiModel,
-          entries: incompleteLearningEntries,
-        }).catch(() => [] as StructuredEntry[]);
-
-        if (repairedLearningEntries.length > 0) {
-          entries = stage2Enrich
-            ? dedupeLearningEntries(mergePreferredEntries(repairedLearningEntries, entries))
-            : filterDisplayEntries(
-                mergePreferredEntries(repairedLearningEntries, entries),
-              );
-        }
-      }
+    if (entries.length > 0 && !directJsonMode && !deferStage2Enrichment) {
+      entries = await completeLearningEntryDetails({
+        apiKey,
+        baseUrl,
+        model: apiModel,
+        entries,
+      });
     }
 
     const combinedEntriesBeforeDisplay = directJsonMode
@@ -5566,6 +6034,8 @@ export async function POST(request: Request) {
       ...sentenceCoverageFallbackEntries,
     ]);
 
+    const skipFinalRepairPass = files.length > 0 || deferStage2Enrichment;
+
     const displayEntriesNeedingRepair = combinedEntriesWithCoverage.filter(
       (entry) =>
         isLowQualityChineseMeaning(entry.vocabulary, entry.chinese) ||
@@ -5576,7 +6046,7 @@ export async function POST(request: Request) {
     );
 
     let repairedDisplayEntries = combinedEntriesWithCoverage;
-    if (displayEntriesNeedingRepair.length > 0 && !directJsonMode) {
+    if (displayEntriesNeedingRepair.length > 0 && !directJsonMode && !skipFinalRepairPass) {
       const finalRepairedEntries = await repairEntriesWithModel({
         apiKey,
         baseUrl,
@@ -5597,7 +6067,7 @@ export async function POST(request: Request) {
     );
 
     let combinedEntriesForDisplay = repairedDisplayEntries;
-    if (entriesNeedingChineseMeaning.length > 0 && !directJsonMode) {
+    if (entriesNeedingChineseMeaning.length > 0 && !directJsonMode && !skipFinalRepairPass) {
       const repairedChineseEntries = await repairChineseMeaningsWithModel({
         apiKey,
         baseUrl,
