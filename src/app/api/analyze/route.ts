@@ -9,10 +9,10 @@ import {
 } from "@/lib/recognition-quality";
 
 export const runtime = "nodejs";
-export const maxDuration = 180;
+export const maxDuration = 240;
 
-const DIRECT_IMAGE_MODEL_TIMEOUT_MS = 130000;
-const FAST_TRANSCRIPT_FALLBACK_TIMEOUT_MS = 18000;
+const DIRECT_IMAGE_MODEL_TIMEOUT_MS = 170000;
+const FAST_TRANSCRIPT_FALLBACK_TIMEOUT_MS = 30000;
 
 type ArkResponse = {
   choices?: Array<{
@@ -1941,6 +1941,187 @@ function isNarrativeClauseFragment(candidate: string) {
   return false;
 }
 
+const INCOMPLETE_TRAILING_WORDS = new Set([
+  "about",
+  "across",
+  "after",
+  "against",
+  "along",
+  "among",
+  "around",
+  "as",
+  "at",
+  "before",
+  "between",
+  "by",
+  "during",
+  "for",
+  "from",
+  "in",
+  "into",
+  "near",
+  "of",
+  "off",
+  "on",
+  "onto",
+  "over",
+  "through",
+  "to",
+  "toward",
+  "towards",
+  "under",
+  "until",
+  "upon",
+  "with",
+  "within",
+  "without",
+]);
+
+const WEAK_EDGE_FUNCTION_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "been",
+  "being",
+  "but",
+  "by",
+  "for",
+  "from",
+  "had",
+  "has",
+  "have",
+  "he",
+  "her",
+  "his",
+  "in",
+  "is",
+  "it",
+  "its",
+  "of",
+  "on",
+  "or",
+  "she",
+  "that",
+  "the",
+  "their",
+  "them",
+  "they",
+  "this",
+  "those",
+  "to",
+  "was",
+  "were",
+  "which",
+  "who",
+  "with",
+]);
+
+function isIncompleteLearningChunk(candidate: string) {
+  const normalized = normalizeVocabulary(candidate);
+  const words = tokenizeVocabularyWords(normalized);
+  if (words.length < 2) {
+    return false;
+  }
+
+  const lowerWords = words.map((word) => word.toLowerCase());
+  const firstWord = lowerWords[0] ?? "";
+  const lastWord = lowerWords.at(-1) ?? "";
+
+  if (INCOMPLETE_TRAILING_WORDS.has(lastWord)) {
+    return true;
+  }
+
+  if (words.length >= 3 && WEAK_EDGE_FUNCTION_WORDS.has(firstWord) && !/^[A-Z]/.test(words[1] ?? "")) {
+    return true;
+  }
+
+  if (words.length >= 3 && WEAK_EDGE_FUNCTION_WORDS.has(lastWord) && !INCOMPLETE_TRAILING_WORDS.has(lastWord)) {
+    return true;
+  }
+
+  if (
+    words.length >= 4 &&
+    WEAK_EDGE_FUNCTION_WORDS.has(lowerWords.at(-2) ?? "") &&
+    WEAK_EDGE_FUNCTION_WORDS.has(lastWord)
+  ) {
+    return true;
+  }
+
+  if (
+    words.length >= 4 &&
+    /^(?:and|or|but)$/i.test(lowerWords.at(-2) ?? "") &&
+    /^(?:advised|advises|advising|appointed|appoints|appointing|attacked|attacks|attacking|delivered|delivers|delivering|injured|injures|injuring|killed|kills|killing|reported|reports|reporting|responded|responds|responding|said|says|saying|targeted|targeting|voiced|voicing)$/i.test(
+      lastWord,
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function isContextuallyIncompleteLearningChunk(sentence: string, candidate: string) {
+  const normalizedSentence = normalizeSentence(sentence);
+  const normalizedCandidate = normalizeVocabulary(candidate);
+  const words = tokenizeVocabularyWords(normalizedCandidate);
+  const lowerWords = words.map((word) => word.toLowerCase());
+  const firstWord = lowerWords[0] ?? "";
+
+  if (
+    words.length >= 2 &&
+    /^(?:responded|responding|advised|advising|targeting|appointed|appointing|delivered|delivering|injured|injuring|killed|killing|reported|reporting)$/i.test(
+      words[0] ?? "",
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    words.length <= 4 &&
+    /^(?:after|before|by|during|for|from|in|inside|into|of|on|over|through|to|under|with|without)$/i.test(
+      firstWord,
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    /^(?:day|days|week|weeks|month|months|year|years|minute|minutes|second|seconds|hour|hours|period)$/i.test(
+      firstWord,
+    )
+  ) {
+    return true;
+  }
+
+  if (/\b(?:period set out for|set out for reaching)\b/i.test(normalizedCandidate)) {
+    return true;
+  }
+
+  if (words.length >= 2 && lowerWords.includes("and")) {
+    const lowerSentence = normalizedSentence.toLowerCase();
+    const lowerCandidate = normalizedCandidate.toLowerCase();
+    const startIndex = lowerSentence.indexOf(lowerCandidate);
+    if (startIndex >= 0) {
+      const trailingText = lowerSentence.slice(startIndex + lowerCandidate.length).trim();
+      const nextWord = trailingText.match(/^[a-z-]+/)?.[0] ?? "";
+      if (
+        nextWord &&
+        nextWord.length >= 3 &&
+        !WEAK_EDGE_FUNCTION_WORDS.has(nextWord) &&
+        !PHRASE_EDGE_STOPWORDS.has(nextWord)
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 const LOW_VALUE_STANDALONE_WORDS = new Set([
   "after",
   "arriving",
@@ -2170,7 +2351,12 @@ function isValidLearningEntry(sentence: string, entry: StructuredEntry) {
     return false;
   }
 
-  if (isAwkwardHeuristicCandidate(vocabulary) || isNarrativeClauseFragment(vocabulary)) {
+  if (
+    isAwkwardHeuristicCandidate(vocabulary) ||
+    isNarrativeClauseFragment(vocabulary) ||
+    isIncompleteLearningChunk(vocabulary) ||
+    isContextuallyIncompleteLearningChunk(normalizedSentence, vocabulary)
+  ) {
     return false;
   }
 
@@ -2658,6 +2844,37 @@ function dedupeLearningEntries(entries: StructuredEntry[]) {
   });
 }
 
+function dedupeEntriesByVocabulary(entries: StructuredEntry[]) {
+  const bestByVocabulary = new Map<string, StructuredEntry>();
+
+  for (const entry of entries) {
+    const normalizedEntry = sanitizeStructuredEntry(entry);
+    const vocabularyKey = normalizeVocabulary(normalizedEntry.vocabulary).toLowerCase();
+    if (!vocabularyKey) {
+      continue;
+    }
+
+    const currentBest = bestByVocabulary.get(vocabularyKey);
+    if (!currentBest) {
+      bestByVocabulary.set(vocabularyKey, normalizedEntry);
+      continue;
+    }
+
+    const currentScore =
+      scoreHeuristicCandidate(currentBest.vocabulary, currentBest.sentence) +
+      Math.min(normalizeSentence(currentBest.sentence).length / 20, 12);
+    const nextScore =
+      scoreHeuristicCandidate(normalizedEntry.vocabulary, normalizedEntry.sentence) +
+      Math.min(normalizeSentence(normalizedEntry.sentence).length / 20, 12);
+
+    if (nextScore > currentScore) {
+      bestByVocabulary.set(vocabularyKey, normalizedEntry);
+    }
+  }
+
+  return Array.from(bestByVocabulary.values());
+}
+
 function pruneContainedEntries(entries: StructuredEntry[]) {
   return entries.filter((entry, index, current) => {
     const sentence = normalizeSentence(entry.sentence);
@@ -2682,10 +2899,36 @@ function pruneContainedEntries(entries: StructuredEntry[]) {
       if (candidateVocabulary.length <= vocabulary.length) {
         return false;
       }
+      if (!lowerCandidateVocabulary.includes(lowerVocabulary)) {
+        return false;
+      }
+
       const bothLookLikeProperNouns =
         isLikelyProperNounVocabulary(candidateVocabulary) &&
         isLikelyProperNounVocabulary(vocabulary);
-      return bothLookLikeProperNouns && lowerCandidateVocabulary.includes(lowerVocabulary);
+      if (bothLookLikeProperNouns) {
+        return true;
+      }
+
+      const candidateWordCount = countWords(candidateVocabulary);
+      const wordCount = countWords(vocabulary);
+      const containedAsCompleteChunk = new RegExp(
+        `(?:^|\\s)${lowerVocabulary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|$)`,
+      ).test(lowerCandidateVocabulary);
+      const scoreGap =
+        scoreHeuristicCandidate(candidateVocabulary, sentence) -
+        scoreHeuristicCandidate(vocabulary, sentence);
+
+      if (
+        containedAsCompleteChunk &&
+        wordCount >= 2 &&
+        candidateWordCount >= wordCount + 1 &&
+        scoreGap >= 18
+      ) {
+        return true;
+      }
+
+      return false;
     });
   });
 }
@@ -2753,7 +2996,9 @@ function filterDisplayEntries(entries: StructuredEntry[]) {
             entry.sentence.toLowerCase().includes(entry.vocabulary.toLowerCase()) &&
             (countWords(entry.vocabulary) > 1 || isHighValueStandaloneLearningWord(entry.vocabulary)) &&
             !isAwkwardHeuristicCandidate(entry.vocabulary) &&
-            !isNarrativeClauseFragment(entry.vocabulary)
+            !isNarrativeClauseFragment(entry.vocabulary) &&
+            !isIncompleteLearningChunk(entry.vocabulary) &&
+            !isContextuallyIncompleteLearningChunk(entry.sentence, entry.vocabulary)
           );
         }),
     ),
@@ -2788,7 +3033,11 @@ function keepDirectModelLearningEntries(entries: StructuredEntry[]) {
           sentence.length > 0 &&
           vocabulary.length > 0 &&
           !isLowQualitySourceSentence(sentence) &&
-          sentence.toLowerCase().includes(vocabulary.toLowerCase())
+          sentence.toLowerCase().includes(vocabulary.toLowerCase()) &&
+          !isAwkwardHeuristicCandidate(vocabulary) &&
+          !isNarrativeClauseFragment(vocabulary) &&
+          !isIncompleteLearningChunk(vocabulary) &&
+          !isContextuallyIncompleteLearningChunk(sentence, vocabulary)
         );
       }),
   );
@@ -2809,7 +3058,9 @@ function keepCandidateLearningEntries(entries: StructuredEntry[]) {
           sentence.toLowerCase().includes(vocabulary.toLowerCase()) &&
           countWords(vocabulary) <= 10 &&
           !isAwkwardHeuristicCandidate(vocabulary) &&
-          !isNarrativeClauseFragment(vocabulary)
+          !isNarrativeClauseFragment(vocabulary) &&
+          !isIncompleteLearningChunk(vocabulary) &&
+          !isContextuallyIncompleteLearningChunk(sentence, vocabulary)
         );
       }),
   );
@@ -3081,7 +3332,7 @@ async function repairEntriesWithModel(params: {
       apiKey: params.apiKey,
       baseUrl: params.baseUrl,
       model: params.model,
-      timeoutMs: 18000,
+      timeoutMs: 30000,
       messages: [
         {
           role: "system",
@@ -3152,7 +3403,7 @@ async function repairChineseMeaningsWithModel(params: {
       apiKey: params.apiKey,
       baseUrl: params.baseUrl,
       model: params.model,
-      timeoutMs: 15000,
+      timeoutMs: 24000,
       messages: [
         {
           role: "system",
@@ -3215,7 +3466,7 @@ async function fillCandidateEntriesWithModel(params: {
       apiKey: params.apiKey,
       baseUrl: params.baseUrl,
       model: params.model,
-      timeoutMs: 10000,
+      timeoutMs: 18000,
       messages: [
         {
           role: "system",
@@ -3725,7 +3976,7 @@ async function extractTextFromImageWithModel(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: params.timeoutMs ?? 120000,
+    timeoutMs: params.timeoutMs ?? 160000,
     messages: [
       {
         role: "system",
@@ -3858,7 +4109,7 @@ async function analyzeImageWithModel(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: params.timeoutMs ?? 130000,
+    timeoutMs: params.timeoutMs ?? 170000,
     messages: [
       {
         role: "system",
@@ -3950,7 +4201,7 @@ async function extractImageEntriesFirstPassWithModel(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: params.timeoutMs ?? 130000,
+    timeoutMs: params.timeoutMs ?? 170000,
     messages: [
       {
         role: "system",
@@ -4076,7 +4327,7 @@ async function structureTranscript(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: 130000,
+    timeoutMs: 170000,
     messages: [
       {
         role: "system",
@@ -4155,6 +4406,7 @@ async function extractTranscriptEntriesFirstPass(params: {
   instructions?: string;
   existingEntries?: RecognitionEntry[];
   appendOnly?: boolean;
+  timeoutMs?: number;
 }) {
   const existingVocabulary = (params.existingEntries ?? [])
     .map((entry) => `${entry.vocabulary} (${entry.sentence})`)
@@ -4164,7 +4416,7 @@ async function extractTranscriptEntriesFirstPass(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: 130000,
+    timeoutMs: params.timeoutMs ?? 170000,
     messages: [
       {
         role: "system",
@@ -4248,7 +4500,7 @@ async function extractProperNounEntriesFromTranscript(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: 12000,
+    timeoutMs: 20000,
     messages: [
       {
         role: "system",
@@ -4319,7 +4571,7 @@ async function enrichProperNounEntriesWithModel(params: {
       apiKey: params.apiKey,
       baseUrl: params.baseUrl,
       model: params.model,
-      timeoutMs: 14000,
+      timeoutMs: 22000,
       messages: [
         {
           role: "system",
@@ -4809,7 +5061,7 @@ async function generateEntriesForRequestedTermsDirect(params: {
     apiKey: params.apiKey,
     baseUrl: params.baseUrl,
     model: params.model,
-    timeoutMs: 12000,
+    timeoutMs: 20000,
     messages: [
       {
         role: "system",
@@ -5167,31 +5419,7 @@ async function analyzeImageFilesDirectly(params: {
             category: "proper-noun" as const,
           })),
         );
-        const directCoverage = countCoveredSentences(directLearningEntries);
-        const directSentenceCount = splitTranscriptSentences(directTranscript).length;
-        const needsTranscriptAssist =
-          !directTranscript ||
-          directSentenceCount <= 2 ||
-          directLearningEntries.length < Math.max(directSentenceCount * 2, 10) ||
-          directCoverage < Math.max(directSentenceCount - 1, 2);
-
-        const vision = needsTranscriptAssist
-          ? await extractTextFromImageWithAiFallback({
-              apiKey: params.apiKey,
-              baseUrl: params.baseUrl,
-              model: params.model,
-              buffer,
-              fileType: file.type,
-            }).catch(() => ({
-              transcript: "",
-              diagnostics: { default: null, exhaustive: null, merged: null },
-            }))
-          : {
-              transcript: "",
-              diagnostics: { default: null, exhaustive: null, merged: null },
-            };
-
-        const mergedTranscript = mergeTranscriptVariants(directTranscript, vision.transcript);
+        const mergedTranscript = directTranscript;
         return {
           transcript: mergedTranscript,
           entries: directLearningEntries,
@@ -5201,12 +5429,11 @@ async function analyzeImageFilesDirectly(params: {
             fileName: file.name,
             image: params.imageMetadata?.[index] ?? null,
             ocr: null,
-            visionDefault:
-              buildStageDiagnostics(
-                directVisionPayload?.cleanedText ?? "",
-                directTranscript,
-              ) ?? vision.diagnostics.default,
-            visionExhaustive: vision.diagnostics.exhaustive,
+            visionDefault: buildStageDiagnostics(
+              directVisionPayload?.cleanedText ?? "",
+              directTranscript,
+            ),
+            visionExhaustive: null,
             mergedTranscript: buildStageDiagnostics(mergedTranscript, mergedTranscript),
             extractionMethod: "vision" as const,
           },
@@ -5236,48 +5463,90 @@ async function analyzeImageFilesDirectly(params: {
     const directSeedProperNouns = dedupeLearningEntries(
       validResults.flatMap((item) => item.properNouns),
     );
-    const sentenceCount = splitTranscriptSentences(mergedTranscript).length;
-    const directSeedCoverage = countCoveredSentences(directSeedEntries);
-    const directSeedLooksEnough =
-      directSeedEntries.length >= Math.max(sentenceCount * 2, 10) &&
-      directSeedCoverage >= Math.max(sentenceCount - 1, 2);
-
-    const extracted =
-      mergedTranscript && !directSeedLooksEnough
-        ? await extractPrimaryEntriesFromTranscript({
-            apiKey: params.apiKey,
-            baseUrl: params.baseUrl,
-            model: params.model,
-            transcript: mergedTranscript,
-            instructions: params.instructions,
-            existingEntries: params.existingEntries,
-            appendOnly: false,
-            boost: true,
-          })
-        : {
-            entries: [] as StructuredEntry[],
-            properNouns: [] as StructuredEntry[],
-          };
-    const entries = sortEntriesByTranscriptOrder(
-      mergedTranscript,
-      keepCandidateLearningEntries(
-        pruneContainedEntries(
-          directSeedLooksEnough
-            ? directSeedEntries
-            : [...directSeedEntries, ...extracted.entries],
-        ),
-      ),
+    const directLearningEntries = keepCandidateLearningEntries(
+      pruneContainedEntries(directSeedEntries),
     );
     const properNouns = sortEntriesByTranscriptOrder(
       mergedTranscript,
       keepDirectModelProperNouns(
-        pruneContainedEntries(
-          directSeedLooksEnough
-            ? directSeedProperNouns
-            : [...directSeedProperNouns, ...extracted.properNouns],
-        ),
+        pruneContainedEntries(directSeedProperNouns),
       ),
     ).slice(0, 24);
+    const sentenceCount = splitTranscriptSentences(mergedTranscript).length;
+    const minimumLearningTarget = Math.min(Math.max(sentenceCount * 3, 18), 48);
+    const supplementalModelExtraction =
+      mergedTranscript && directLearningEntries.length < minimumLearningTarget
+        ? await extractTranscriptEntriesFirstPass({
+            apiKey: params.apiKey,
+            baseUrl: params.baseUrl,
+            model: params.model,
+            transcript: mergedTranscript,
+            instructions: `${params.instructions || ""}\n请只补充新增的高质量词条。不要输出残缺词块、介词开头短语、主谓叙述片段、被更完整表达覆盖的碎片。优先输出完整固定搭配、名词短语、短语动词和新闻表达。`,
+            existingEntries: [
+              ...(params.existingEntries ?? []),
+              ...(directLearningEntries as unknown as RecognitionEntry[]),
+              ...(properNouns as unknown as RecognitionEntry[]),
+            ],
+            appendOnly: true,
+            timeoutMs: 45000,
+          }).catch(() => ({
+            learningEntries: [] as StructuredEntry[],
+            properNouns: [] as StructuredEntry[],
+          }))
+        : {
+            learningEntries: [] as StructuredEntry[],
+            properNouns: [] as StructuredEntry[],
+          };
+    const supplementalModelEntries = keepCandidateLearningEntries(
+      pruneContainedEntries(
+        (supplementalModelExtraction.learningEntries ?? []).map((entry) =>
+          applyLearningEntryDefaults({
+            sentence: entry.sentence ?? "",
+            vocabulary: entry.vocabulary ?? "",
+            chinese: "",
+            example: "",
+            pronunciation: "",
+            partOfSpeech: entry.partOfSpeech ?? "",
+          }),
+        ),
+      ),
+    );
+    const stillNeedsSupplement =
+      mergedTranscript &&
+      directLearningEntries.length + supplementalModelEntries.length < Math.max(sentenceCount * 2, 14);
+    const localSupplementEntries =
+      stillNeedsSupplement
+        ? buildRawTranscriptCandidateEntries({
+            transcript: mergedTranscript,
+            existingEntries: [
+              ...(params.existingEntries ?? []),
+              ...(directLearningEntries as unknown as RecognitionEntry[]),
+              ...(supplementalModelEntries as unknown as RecognitionEntry[]),
+              ...(properNouns as unknown as RecognitionEntry[]),
+            ],
+            currentEntries: [
+              ...directLearningEntries,
+              ...supplementalModelEntries,
+              ...properNouns,
+            ],
+            limit: Math.min(
+              Math.max(minimumLearningTarget - directLearningEntries.length - supplementalModelEntries.length, 0),
+              10,
+            ),
+          })
+        : [];
+    const entries = sortEntriesByTranscriptOrder(
+      mergedTranscript,
+      dedupeEntriesByVocabulary(
+        pruneContainedEntries(
+          dedupeLearningEntries([
+            ...directLearningEntries,
+            ...supplementalModelEntries,
+            ...localSupplementEntries,
+          ]),
+        ),
+      ),
+    );
 
     if (!mergedTranscript && entries.length === 0 && properNouns.length === 0) {
       return fallbackToOcrTranscript();
@@ -5292,7 +5561,7 @@ async function analyzeImageFilesDirectly(params: {
       ocrSentenceCount: splitTranscriptSentences(mergedTranscript).length,
       aiInputLength: mergedTranscript.length,
       aiInputSentenceCount: splitTranscriptSentences(mergedTranscript).length,
-      aiSeedEntryCount: entries.length,
+      aiSeedEntryCount: directLearningEntries.length,
       aiOutputCount: entries.length,
       finalDisplayCount: entries.length,
       ...summarizeSentenceCoverage(mergedTranscript, entries),

@@ -1092,7 +1092,7 @@ export function LearningWorkspace() {
               : payload.ocrMethod === "tesseract"
                 ? "（已优先使用本地 OCR）"
                 : ""
-          }。`,
+          }。中文、例句和翻译会继续自动补全。`,
         );
       } else if (targetTaskId) {
         const previousTaskCount = selectedTask ? countTaskEntries(selectedTask) : 0;

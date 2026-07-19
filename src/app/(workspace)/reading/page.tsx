@@ -105,6 +105,42 @@ function resolveDisplayChinese(entry: {
   return "";
 }
 
+function buildEntryRepairKey(entry: { sentence: string; vocabulary: string }) {
+  return `${normalizeSentenceForDisplayOrder(entry.sentence)}__${normalizeSentenceForDisplayOrder(entry.vocabulary)}`;
+}
+
+function mergeRepairedEntryFields<T extends {
+  sentence: string;
+  vocabulary: string;
+  chinese?: string;
+  partOfSpeech?: string;
+  sentenceChinese?: string;
+  example?: string;
+  exampleChinese?: string;
+  difficulty?: string;
+  pronunciation?: string;
+}>(currentEntries: T[], repairedEntries: T[]) {
+  const repairedMap = new Map(repairedEntries.map((entry) => [buildEntryRepairKey(entry), entry]));
+
+  return currentEntries.map((entry) => {
+    const repaired = repairedMap.get(buildEntryRepairKey(entry));
+    if (!repaired) {
+      return entry;
+    }
+
+    return {
+      ...entry,
+      chinese: repaired.chinese?.trim() || entry.chinese,
+      partOfSpeech: repaired.partOfSpeech?.trim() || entry.partOfSpeech,
+      sentenceChinese: repaired.sentenceChinese?.trim() || entry.sentenceChinese,
+      example: repaired.example?.trim() || entry.example,
+      exampleChinese: repaired.exampleChinese?.trim() || entry.exampleChinese,
+      difficulty: repaired.difficulty?.trim() || entry.difficulty,
+      pronunciation: repaired.pronunciation?.trim() || entry.pronunciation,
+    };
+  });
+}
+
 function resolveSentenceChinese(entry: { sentenceChinese?: string }) {
   const value = entry.sentenceChinese?.trim() ?? "";
   return !isLowQualityTranslation(value) ? value : "";
@@ -239,11 +275,25 @@ export default function ReadingPage() {
           return;
         }
 
+        const repairedCombinedEntries = [
+          ...(Array.isArray(nextEntries) ? nextEntries : []),
+          ...(Array.isArray(nextProperNouns) ? nextProperNouns : []),
+        ];
+
+        const mergedEntries = mergeRepairedEntryFields(
+          currentTask.entries ?? [],
+          repairedCombinedEntries,
+        );
+        const mergedProperNouns = mergeRepairedEntryFields(
+          currentTask.properNouns ?? [],
+          repairedCombinedEntries,
+        );
+
         replaceTaskEntries({
           taskId: currentTaskId,
           rawText: payload.rawText ?? payload.cleanedText ?? currentTask.rawText,
-          entries: nextEntries ?? currentTask.entries,
-          properNouns: nextProperNouns ?? currentTask.properNouns ?? [],
+          entries: mergedEntries,
+          properNouns: mergedProperNouns,
           keepCurrentSelection: true,
         });
       } catch (error) {
